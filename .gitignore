@@ -1,0 +1,15 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+node_modules/
+.next/
+out/
+data/
+backups/
+frontend/.env.local
+*.log
+

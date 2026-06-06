@@ -1,0 +1,18 @@
+services:
+  nginx:
+    environment:
+      DOMAIN: ${DOMAIN}
+    command:
+      - /bin/sh
+      - -c
+      - envsubst '$$DOMAIN' < /etc/nginx/templates/nginx.conf.template > /tmp/nginx.conf && exec nginx -c /tmp/nginx.conf -g 'daemon off;'
+    ports:
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.prod.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - certbot_web:/var/www/certbot:ro
+
+volumes:
+  certbot_web:
+

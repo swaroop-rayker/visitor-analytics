@@ -1,0 +1,75 @@
+name: visitor-analytics
+
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: ${ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: sqlite:////data/analytics.db
+      GEOIP_CITY_DB: /geoip/GeoLite2-City.mmdb
+      GEOIP_ASN_DB: /geoip/GeoLite2-ASN.mmdb
+      BACKUP_DIR: /backups
+    volumes:
+      - analytics_data:/data
+      - backups:/backups:ro
+      - ./geoip:/geoip:ro
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>{if(!r.ok)process.exit(1)})"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/proxy_params:/etc/nginx/proxy_params:ro
+    security_opt:
+      - no-new-privileges:true
+
+  backup:
+    build: ./backend
+    restart: unless-stopped
+    command: ["python", "-m", "app.jobs.backup_daemon"]
+    env_file: ${ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: sqlite:////data/analytics.db
+      BACKUP_DIR: /backups
+    volumes:
+      - analytics_data:/data
+      - backups:/backups
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  analytics_data:
+  backups:

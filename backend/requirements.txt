@@ -1,0 +1,11 @@
+alembic==1.14.1
+fastapi==0.136.3
+geoip2==4.8.1
+httpx==0.28.1
+psutil==6.1.1
+pydantic-settings==2.7.1
+PyJWT==2.13.0
+pwdlib[argon2]==0.2.1
+SQLAlchemy==2.0.38
+user-agents==2.2.0
+uvicorn[standard]==0.34.0
