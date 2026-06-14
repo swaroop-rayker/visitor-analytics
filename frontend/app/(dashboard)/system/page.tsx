@@ -1,6 +1,6 @@
 "use client";
 
-import { Clock, Database, HardDrive, Map, MemoryStick, ShieldCheck, Globe, RefreshCw } from "lucide-react";
+import { Clock, Database, HardDrive, Map, MemoryStick, ShieldCheck, Globe, RefreshCw, Signal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ErrorState, LoadingState } from "@/components/data-state";
 import { PageHeader } from "@/components/page-header";
@@ -26,6 +26,11 @@ export default function SystemPage() {
   // GeoIP update state
   const [isUpdatingGeoIP, setIsUpdatingGeoIP] = useState(false);
   const [geoIPMessage, setGeoIPMessage] = useState("");
+  const [isTogglingGeoIP, setIsTogglingGeoIP] = useState(false);
+
+  // Latency toggle state
+  const [isTogglingLatency, setIsTogglingLatency] = useState(false);
+  const [latencyMessage, setLatencyMessage] = useState("");
 
   // Initial load
   useEffect(() => {
@@ -108,6 +113,60 @@ export default function SystemPage() {
     }
   }
 
+  async function handleToggleGeoIP(disabled: boolean) {
+    setIsTogglingGeoIP(true);
+    setGeoIPMessage("");
+    try {
+      const res = await api<{ success: boolean; disabled: boolean; env_updated: boolean }>("/system/geoip/toggle", {
+        method: "POST",
+        body: JSON.stringify({ disabled }),
+      });
+      if (res.success) {
+        // Fetch fresh health stats to update the whole screen
+        const freshHealth = await api<Health>("/system/health");
+        setHealth(freshHealth);
+        
+        if (!res.env_updated) {
+          setGeoIPMessage("⚠️ Applied in-memory, but failed to write to .env file on disk. Changes will be lost on container restart.");
+        } else {
+          setGeoIPMessage(disabled ? "✅ Databases disabled and saved to disk." : "✅ Databases enabled and saved to disk.");
+          setTimeout(() => setGeoIPMessage(""), 5000);
+        }
+      }
+    } catch (e: any) {
+      setGeoIPMessage(`❌ Error: ${e.message || "Failed to toggle databases."}`);
+    } finally {
+      setIsTogglingGeoIP(false);
+    }
+  }
+
+  async function handleToggleLatency(disabled: boolean) {
+    setIsTogglingLatency(true);
+    setLatencyMessage("");
+    try {
+      const res = await api<{ success: boolean; disabled: boolean; env_updated: boolean }>("/system/latency/toggle", {
+        method: "POST",
+        body: JSON.stringify({ disabled }),
+      });
+      if (res.success) {
+        // Fetch fresh health stats to update the whole screen
+        const freshHealth = await api<Health>("/system/health");
+        setHealth(freshHealth);
+        
+        if (!res.env_updated) {
+          setLatencyMessage("⚠️ Applied in-memory, but failed to write to .env file on disk. Changes will be lost on container restart.");
+        } else {
+          setLatencyMessage(disabled ? "✅ Latency triangulation disabled and saved to disk." : "✅ Latency triangulation enabled and saved to disk.");
+          setTimeout(() => setLatencyMessage(""), 5000);
+        }
+      }
+    } catch (e: any) {
+      setLatencyMessage(`❌ Error: ${e.message || "Failed to toggle latency triangulation."}`);
+    } finally {
+      setIsTogglingLatency(false);
+    }
+  }
+
   function getGeoIPBadge(status: string) {
     switch (status) {
       case "up_to_date":
@@ -116,6 +175,8 @@ export default function SystemPage() {
         return <Badge className="bg-amber-500/15 text-amber-500 hover:bg-amber-500/15 border border-amber-500/30">Update available</Badge>;
       case "updating":
         return <Badge className="bg-blue-500/15 text-blue-500 hover:bg-blue-500/15 border border-blue-500/30 animate-pulse">Updating...</Badge>;
+      case "disabled":
+        return <Badge className="bg-slate-500/15 text-slate-400 hover:bg-slate-500/15 border border-slate-500/30">Disabled</Badge>;
       case "missing":
       default:
         return <Badge className="bg-rose-500/15 text-rose-500 hover:bg-rose-500/15 border border-rose-500/30">Missing</Badge>;
@@ -133,11 +194,26 @@ export default function SystemPage() {
       
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Database size" value={formatBytes(health.database_size_bytes)} icon={Database} hint={health.database_status} />
-        <StatCard label="Disk usage" value={`${health.disk_used_percent.toFixed(1)}%`} icon={HardDrive} />
-        <StatCard label="Memory usage" value={`${health.memory_used_percent.toFixed(1)}%`} icon={MemoryStick} />
+        <StatCard 
+          label="Disk usage" 
+          value={`${health.disk_used_percent.toFixed(1)}%`} 
+          icon={HardDrive} 
+          hint={`${formatBytes(health.disk_used_bytes)} / ${formatBytes(health.disk_total_bytes)}`}
+        />
+        <StatCard 
+          label="Memory usage" 
+          value={`${health.memory_used_percent.toFixed(1)}%`} 
+          icon={MemoryStick} 
+          hint={`${formatBytes(health.memory_used_bytes)} / ${formatBytes(health.memory_total_bytes)}`}
+        />
         <StatCard 
           label="Uptime" 
-          value={`${Math.floor(health.uptime_seconds / 3600)}h ${Math.floor((health.uptime_seconds % 3600) / 60)}m`} 
+          value={(() => {
+            const d = Math.floor(health.uptime_seconds / 86400);
+            const h = Math.floor((health.uptime_seconds % 86400) / 3600);
+            const m = Math.floor((health.uptime_seconds % 3600) / 60);
+            return d > 0 ? `${d}d ${h}h ${m}m` : `${h}h ${m}m`;
+          })()} 
           icon={Clock} 
         />
       </section>
@@ -159,17 +235,32 @@ export default function SystemPage() {
               <span className="text-muted-foreground">GeoLite2 ASN</span>
               {getGeoIPBadge(health.geoip_asn_status)}
             </div>
-            <div className="pt-2 border-t">
+            <div className="pt-2 border-t space-y-2">
               <Button 
                 variant="outline" 
                 size="sm" 
                 className="w-full flex items-center justify-center gap-2"
                 onClick={handleTriggerGeoIPUpdate}
-                disabled={isGeoIPUpdating}
+                disabled={isGeoIPUpdating || health.disable_maxmind_db}
               >
                 <RefreshCw className={`size-3.5 ${isGeoIPUpdating ? "animate-spin" : ""}`} />
                 {isGeoIPUpdating ? "Updating..." : "Trigger Auto-Update"}
               </Button>
+              
+              <Button
+                variant="outline"
+                size="sm"
+                className={`w-full flex items-center justify-center gap-2 transition-colors ${
+                  health.disable_maxmind_db 
+                    ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border-emerald-500/30" 
+                    : "text-rose-400 hover:text-rose-300 hover:bg-rose-950/20 border-rose-900/30"
+                }`}
+                onClick={() => handleToggleGeoIP(!health.disable_maxmind_db)}
+                disabled={isTogglingGeoIP}
+              >
+                {health.disable_maxmind_db ? "Enable Databases" : "Disable Databases"}
+              </Button>
+
               {geoIPMessage && (
                 <p className="mt-2 text-xs text-muted-foreground text-center text-wrap">
                   {geoIPMessage}
@@ -221,6 +312,46 @@ export default function SystemPage() {
                 </p>
               )}
             </form>
+          </CardContent>
+        </Card>
+
+        {/* Latency Triangulation Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Signal className="size-4" />Latency Triangulation
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">Status</span>
+              {health.disable_latency_triangulation ? (
+                <Badge className="bg-slate-500/15 text-slate-400 hover:bg-slate-500/15 border border-slate-500/30">Disabled</Badge>
+              ) : (
+                <Badge className="bg-emerald-500/15 text-emerald-500 hover:bg-emerald-500/15 border border-emerald-500/30">Enabled</Badge>
+              )}
+            </div>
+            <div className="pt-2 border-t space-y-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className={`w-full flex items-center justify-center gap-2 transition-colors ${
+                  health.disable_latency_triangulation 
+                    ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border-emerald-500/30" 
+                    : "text-rose-400 hover:text-rose-300 hover:bg-rose-950/20 border-rose-900/30"
+                }`}
+                onClick={() => handleToggleLatency(!health.disable_latency_triangulation)}
+                disabled={isTogglingLatency}
+              >
+                {health.disable_latency_triangulation ? "Enable Triangulation" : "Disable Triangulation"}
+              </Button>
+
+              {latencyMessage && (
+                <p className="mt-2 text-xs text-muted-foreground text-center text-wrap">
+                  {latencyMessage}
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
 

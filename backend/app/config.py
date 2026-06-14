@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     backup_hour_utc: int = 2
     geoip_city_db: str = "./geoip/GeoLite2-City.mmdb"
     geoip_asn_db: str = "./geoip/GeoLite2-ASN.mmdb"
+    disable_maxmind_db: bool = False
+    disable_latency_triangulation: bool = False
     maxmind_license_key: str | None = None
     use_external_geoip_api: bool = True
     reverse_geocoding_enabled: bool = True

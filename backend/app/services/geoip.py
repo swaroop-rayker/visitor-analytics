@@ -108,10 +108,14 @@ class GeoIPService:
 
     @property
     def city_available(self) -> bool:
+        if getattr(settings, "disable_maxmind_db", False):
+            return False
         return self.city_path.is_file()
 
     @property
     def asn_available(self) -> bool:
+        if getattr(settings, "disable_maxmind_db", False):
+            return False
         return self.asn_path.is_file()
 
     def lookup(self, ip_address: str) -> GeoResult:

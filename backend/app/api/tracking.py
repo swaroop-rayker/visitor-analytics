@@ -301,7 +301,8 @@ def _record(request: Request, signals: BrowserSignals, db: Session) -> TrackResp
                 classification=classification,
                 class_confidence=class_confidence,
                 class_reason=class_reason,
-                tracking_status="persisted"
+                tracking_status="persisted",
+                ip=ip,
             )
             logger.info("[TRACKER_TRACE] STAGE: db_write_done | Hash: %s | VisitID: %s", visitor_hash, visit.id)
             logger.info("[TRACKER_TRACE] STAGE: db_commit_done | Hash: %s | VisitID: %s", visitor_hash, visit.id)
@@ -337,6 +338,53 @@ def _record(request: Request, signals: BrowserSignals, db: Session) -> TrackResp
             except Exception as fe:
                 logger.error("[TRACKER_TRACE] STAGE: failed_recording_failed | Error: %s", str(fe), exc_info=True)
             return TrackResponse(redirect_url=settings.redirect_target_url)
+
+
+@router.get("/api/v1/honeypot", include_in_schema=False)
+def honeypot_trigger(
+    request: Request,
+    v: str | None = None,
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """
+    Stealth honeypot endpoint to catch automated scrapers and bots.
+    If hit, registers the trigger, marks any associated visit anomalous,
+    and stealthily redirects to the configured redirect target.
+    """
+    from app.services.integrity import register_honeypot_trigger
+    from app.models import VisitLog
+    
+    ip = client_ip(request)
+    logger.warning("[HONEYPOT] Honeypot link clicked! Query nonce: %s | Client IP: %s", v, ip)
+    
+    if v:
+        visit_id = register_honeypot_trigger(v)
+        if visit_id:
+            with TRACK_WRITE_LOCK:
+                try:
+                    visit = db.get(VisitLog, visit_id)
+                    if visit:
+                        visit.is_anomalous = True
+                        reasons = visit.anomaly_reasons or []
+                        if "honeypot_triggered" not in reasons:
+                            reasons.append("honeypot_triggered")
+                            visit.anomaly_reasons = reasons
+                            db.commit()
+                            logger.warning("[HONEYPOT] Updated existing visit %d to anomalous: honeypot_triggered", visit_id)
+                except Exception as e:
+                    logger.error("[HONEYPOT] Failed to update existing visit %d: %s", visit_id, str(e), exc_info=True)
+                    db.rollback()
+                    
+    return RedirectResponse(
+        url=settings.redirect_target_url,
+        status_code=307,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
 
 
 @router.get("/go", include_in_schema=False)
@@ -399,7 +447,7 @@ def tracking_page(
     small{{display:block;margin-top:12px;line-height:1.5;color:#71717a}}
   </style>
 </head>
-<body><main>
+<body><a href="/api/v1/honeypot?v={nonce}" style="display:none;position:absolute;left:-9999px;top:-9999px;" aria-hidden="true" tabindex="-1" rel="nofollow">Security Verification Link</a><main>
   <p><span class="dot">Redirecting</span> securely...</p>
   <p id="status">Recording an anonymous visit. You can continue now, or optionally share your device location once for more accurate city/state analytics.</p>
   <div class="actions">
@@ -409,6 +457,107 @@ def tracking_page(
   <small>Location sharing is optional, uses the browser permission prompt, and the app still works if you deny or ignore it.</small>
 </main>
 <script nonce="{nonce}">
+function cyrb128(str) {{
+  let h1 = 1779033703, h2 = 3024733165, h3 = 3362453659, h4 = 50249339;
+  for (let i = 0, k; i < str.length; i++) {{
+    k = str.charCodeAt(i);
+    h1 = h2 ^ Math.imul(h1 ^ k, 597399067);
+    h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
+    h3 = h4 ^ Math.imul(h3 ^ k, 951274213);
+    h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+  }}
+  h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067);
+  h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
+  h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213);
+  h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
+  return (h1>>>0).toString(16).padStart(8,'0')+(h2>>>0).toString(16).padStart(8,'0')+(h3>>>0).toString(16).padStart(8,'0')+(h4>>>0).toString(16).padStart(8,'0');
+}}
+
+let canvasHash = null;
+try {{
+  let canvas = document.createElement("canvas");
+  canvas.width = 200;
+  canvas.height = 50;
+  let ctx = canvas.getContext("2d");
+  if (ctx) {{
+    ctx.textBaseline = "top";
+    ctx.font = "14px 'Arial'";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = "#f60";
+    ctx.fillRect(125, 1, 62, 20);
+    ctx.fillStyle = "#069";
+    ctx.fillText("VisitorAnalytics, 😃", 2, 15);
+    ctx.fillStyle = "rgba(102, 204, 0, 0.7)";
+    ctx.fillText("VisitorAnalytics, 😃", 4, 17);
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = "blue";
+    ctx.fillRect(20, 20, 10, 10);
+    
+    let dataUrl = canvas.toDataURL();
+    let cHash = cyrb128(dataUrl);
+    
+    let blankCanvas = document.createElement("canvas");
+    blankCanvas.width = 200;
+    blankCanvas.height = 50;
+    let blankCtx = blankCanvas.getContext("2d");
+    let blankHash = blankCtx ? cyrb128(blankCanvas.toDataURL()) : "";
+    
+    canvasHash = (cHash === blankHash) ? "blank" : cHash;
+  }}
+}} catch(e) {{
+  canvasHash = "blocked";
+}}
+
+let webglHash = null;
+try {{
+  let canvas = document.createElement("canvas");
+  let gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+  if (gl) {{
+    let webglData = [];
+    let extList = gl.getSupportedExtensions() || [];
+    webglData.push(extList.join(","));
+    
+    let params = [
+      gl.VERSION,
+      gl.SHADING_LANGUAGE_VERSION,
+      gl.VENDOR,
+      gl.RENDERER,
+      gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS,
+      gl.MAX_CUBE_MAP_TEXTURE_SIZE,
+      gl.MAX_FRAGMENT_UNIFORM_VECTORS,
+      gl.MAX_RENDERBUFFER_SIZE,
+      gl.MAX_TEXTURE_SIZE,
+      gl.MAX_VARYING_VECTORS,
+      gl.MAX_VERTEX_ATTRIBS,
+      gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS,
+      gl.MAX_VERTEX_UNIFORM_VECTORS,
+      gl.MAX_VIEWPORT_DIMS ? gl.getParameter(gl.MAX_VIEWPORT_DIMS).join(",") : "",
+      gl.RED_BITS,
+      gl.GREEN_BITS,
+      gl.BLUE_BITS,
+      gl.ALPHA_BITS,
+      gl.DEPTH_BITS,
+      gl.STENCIL_BITS
+    ];
+    for (let i = 0; i < params.length; i++) {{
+      try {{
+        let val = gl.getParameter(params[i]);
+        webglData.push(params[i] + ":" + (val ? val.toString() : ""));
+      }} catch(e) {{}}
+    }}
+    
+    let dbg = gl.getExtension("WEBGL_debug_renderer_info");
+    if (dbg) {{
+      webglData.push("vendor:" + gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL));
+      webglData.push("renderer:" + gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL));
+    }}
+    
+    webglHash = cyrb128(webglData.join("|"));
+  }}
+}} catch(e) {{
+  webglHash = "blocked";
+}}
+
 let redirectUrl="{target_url}";
 let updateToken=null;
 let preciseCoords=null;
@@ -493,6 +642,9 @@ checkPermissionPromise.then((isGranted) => {{
 }});
 
 const data={{
+  canvas_hash: canvasHash,
+  webgl_hash: webglHash,
+  nonce: "{nonce}",
   timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||null,
   language:navigator.language||null,
   accept_language:Array.isArray(navigator.languages)?navigator.languages.join(","):navigator.language||null,
@@ -562,12 +714,21 @@ const pingServers = [
 
 function measurePing(url){{
   return fetchWithTimeout(url,800)
-    .then((res)=>{{
-      if(!res)return 800;
-      const start=performance.now();
+    .then((res1)=>{{
+      if(!res1)return 800;
+      const start2=performance.now();
       return fetchWithTimeout(url,800)
-        .then((r)=>r?Math.round(performance.now()-start):800)
-        .catch(()=>800);
+        .then((res2)=>{{
+          if(!res2)return 800;
+          const time2=performance.now()-start2;
+          const start3=performance.now();
+          return fetchWithTimeout(url,800)
+            .then((res3)=>{{
+              if(!res3)return 800;
+              const time3=performance.now()-start3;
+              return Math.round((time2+time3)/2);
+            }});
+        }});
     }})
     .catch(()=>800);
 }}

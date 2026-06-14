@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import String, case, cast, desc, func, select
+from sqlalchemy import String, case, cast, desc, func, select, text
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -543,6 +543,11 @@ def delete_visits(
         db.query(CrawlerVisitLog).delete(synchronize_session=False)
         db.query(Visitor).delete(synchronize_session=False)
         db.commit()
+        try:
+            db.execute(text("PRAGMA incremental_vacuum"))
+            db.execute(text("PRAGMA optimize"))
+        except Exception:
+            pass
         return {"deleted": "all"}
 
     if not payload.ids:
@@ -556,6 +561,11 @@ def delete_visits(
         deleted_count += 1
     
     db.commit()
+    try:
+        db.execute(text("PRAGMA incremental_vacuum"))
+        db.execute(text("PRAGMA optimize"))
+    except Exception:
+        pass
     return {"deleted": deleted_count}
 
 
@@ -572,6 +582,11 @@ def delete_visitors(
         db.query(CrawlerVisitLog).delete(synchronize_session=False)
         db.query(Visitor).delete(synchronize_session=False)
         db.commit()
+        try:
+            db.execute(text("PRAGMA incremental_vacuum"))
+            db.execute(text("PRAGMA optimize"))
+        except Exception:
+            pass
         return {"deleted": "all"}
 
     if not payload.ids:
@@ -586,5 +601,10 @@ def delete_visitors(
         deleted_count += 1
     
     db.commit()
+    try:
+        db.execute(text("PRAGMA incremental_vacuum"))
+        db.execute(text("PRAGMA optimize"))
+    except Exception:
+        pass
     return {"deleted": deleted_count}
 

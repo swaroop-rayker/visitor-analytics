@@ -36,9 +36,12 @@ class BrowserSignals(BaseModel):
     ua_platform: str | None = Field(default=None, max_length=64)
     ua_mobile: bool | None = Field(default=None)
     ua_brands: str | None = Field(default=None, max_length=256)
-    save_data: bool | None = Field(default=None)
     has_private_ip: bool | None = Field(default=None)
     ping_jitter: float | None = Field(default=None, ge=0)
+    save_data: bool | None = Field(default=None)
+    canvas_hash: str | None = Field(default=None, max_length=64)
+    webgl_hash: str | None = Field(default=None, max_length=64)
+    nonce: str | None = Field(default=None, max_length=128)
 
 
     @field_validator("*")
@@ -146,6 +149,8 @@ class VisitItem(BaseModel):
     has_private_ip: bool | None = None
     ping_jitter: float | None = None
     screen_resolution: str | None = None
+    canvas_hash: str | None = None
+    webgl_hash: str | None = None
 
 
 
@@ -208,14 +213,20 @@ class HealthResponse(BaseModel):
     database_size_bytes: int
     disk_used_percent: float
     memory_used_percent: float
+    memory_used_bytes: int
+    memory_total_bytes: int
+    disk_used_bytes: int
+    disk_total_bytes: int
     geoip_city_status: str
     geoip_asn_status: str
+    disable_maxmind_db: bool
     last_backup_time: datetime | None
     uptime_seconds: int
     raw_retention_days: int
     redirect_target_url: str
     geoip_update_in_progress: bool
     geoip_last_error: str | None = None
+    disable_latency_triangulation: bool
 
 
 class UpdateRedirectRequest(BaseModel):
@@ -237,3 +248,11 @@ class UpdateRedirectRequest(BaseModel):
 class BulkDeleteRequest(BaseModel):
     ids: list[int] | None = None
     all: bool = False
+
+
+class ToggleGeoIPRequest(BaseModel):
+    disabled: bool
+
+
+class ToggleLatencyRequest(BaseModel):
+    disabled: bool

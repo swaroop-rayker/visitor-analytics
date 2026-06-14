@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import get_db
 from app.dependencies import require_admin
-from app.schemas import HealthResponse, UpdateRedirectRequest
+from app.schemas import HealthResponse, UpdateRedirectRequest, ToggleGeoIPRequest, ToggleLatencyRequest
 from app.services.geoip import geoip_service
 from app.models import AuditLog
 
@@ -63,9 +63,18 @@ def health(db: Session = Depends(get_db)) -> HealthResponse:
     try:
         size = path.stat().st_size if path and path.exists() else 0
         disk_root = str(path.parent if path else Path.cwd())
-        disk = psutil.disk_usage(disk_root).percent
+        du = psutil.disk_usage(disk_root)
+        disk_percent = du.percent
+        disk_used_bytes = du.used
+        disk_total_bytes = du.total
     except OSError:
-        size, disk = 0, 0.0
+        size, disk_percent = 0, 0.0
+        disk_used_bytes, disk_total_bytes = 0, 0
+        
+    mem = psutil.virtual_memory()
+    memory_percent = mem.percent
+    memory_used_bytes = mem.used
+    memory_total_bytes = mem.total
         
     from app.services import geoip_updater
     
@@ -73,6 +82,8 @@ def health(db: Session = Depends(get_db)) -> HealthResponse:
     asn_db_path = Path(settings.geoip_asn_db)
     
     def _db_status(db_path: Path, service_available: bool) -> str:
+        if getattr(settings, "disable_maxmind_db", False):
+            return "disabled"
         if geoip_updater.GEOIP_UPDATE_IN_PROGRESS:
             return "updating"
         if not service_available or not db_path.is_file():
@@ -95,16 +106,22 @@ def health(db: Session = Depends(get_db)) -> HealthResponse:
         status="degraded" if degraded else "healthy",
         database_status=database_status,
         database_size_bytes=size,
-        disk_used_percent=disk,
-        memory_used_percent=psutil.virtual_memory().percent,
+        disk_used_percent=disk_percent,
+        memory_used_percent=memory_percent,
+        memory_used_bytes=memory_used_bytes,
+        memory_total_bytes=memory_total_bytes,
+        disk_used_bytes=disk_used_bytes,
+        disk_total_bytes=disk_total_bytes,
         geoip_city_status=city_status,
         geoip_asn_status=asn_status,
+        disable_maxmind_db=getattr(settings, "disable_maxmind_db", False),
         last_backup_time=_last_backup(),
         uptime_seconds=int(time.monotonic() - STARTED_AT),
         raw_retention_days=settings.raw_retention_days,
         redirect_target_url=settings.redirect_target_url,
         geoip_update_in_progress=geoip_updater.GEOIP_UPDATE_IN_PROGRESS,
         geoip_last_error=geoip_updater.LAST_GEOIP_UPDATE_ERROR,
+        disable_latency_triangulation=settings.disable_latency_triangulation,
     )
 
 
@@ -180,5 +197,65 @@ def trigger_geoip_update(
         "detail": "GeoIP update initiated in background" if has_key else "Update initiated, but MAXMIND_LICENSE_KEY is not configured",
         "has_license_key": has_key,
         "initiated": True
+    }
+
+
+@router.post("/geoip/toggle")
+def toggle_geoip(
+    payload: ToggleGeoIPRequest,
+    admin: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    disabled = payload.disabled
+    
+    # 1. Update the .env file (write true/false string)
+    from app.services.config_updater import update_env_file
+    val_str = "true" if disabled else "false"
+    env_updated = update_env_file("DISABLE_MAXMIND_DB", val_str)
+    
+    # 2. Update in-memory settings
+    settings.disable_maxmind_db = disabled
+    
+    # 3. Clear settings cache
+    from app.config import get_settings
+    get_settings.cache_clear()
+    
+    # 4. Audit this configuration change
+    audit(db, "toggle_geoip_databases", admin, "success", {"disabled": disabled, "env_updated": env_updated})
+        
+    return {
+        "success": True,
+        "disabled": disabled,
+        "env_updated": env_updated,
+    }
+
+
+@router.post("/latency/toggle")
+def toggle_latency(
+    payload: ToggleLatencyRequest,
+    admin: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    disabled = payload.disabled
+    
+    # 1. Update the .env file
+    from app.services.config_updater import update_env_file
+    val_str = "true" if disabled else "false"
+    env_updated = update_env_file("DISABLE_LATENCY_TRIANGULATION", val_str)
+    
+    # 2. Update in-memory settings
+    settings.disable_latency_triangulation = disabled
+    
+    # 3. Clear settings cache
+    from app.config import get_settings
+    get_settings.cache_clear()
+    
+    # 4. Audit this configuration change
+    audit(db, "toggle_latency_triangulation", admin, "success", {"disabled": disabled, "env_updated": env_updated})
+        
+    return {
+        "success": True,
+        "disabled": disabled,
+        "env_updated": env_updated,
     }
 

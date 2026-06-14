@@ -330,3 +330,313 @@ def test_integrity_and_spoof_detection(client, monkeypatch):
     assert "headless_software_gpu" in visits[3]["anomaly_reasons"]
 
 
+def test_canvas_webgl_fingerprint_and_honeypot(client, monkeypatch):
+    monkeypatch.setattr(
+        "app.api.tracking.geoip_service.lookup",
+        lambda _ip: GeoResult(
+            city="Mumbai",
+            state="Maharashtra",
+            country="India",
+            geo_timezone="Asia/Kolkata",
+            asn=55836,
+            organization="Reliance Jio",
+            network_type="Residential Broadband",
+            base_confidence=70,
+        ),
+    )
+
+    # 1. Login to retrieve visits later
+    client.post(
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": "correct-horse-battery"},
+    )
+
+    # 2. Trigger Honeypot BEFORE sync
+    test_nonce_1 = "test_nonce_1"
+    honeypot_res = client.get(f"/api/v1/honeypot?v={test_nonce_1}", follow_redirects=False)
+    assert honeypot_res.status_code == 307
+    assert honeypot_res.headers["location"].startswith("https://")
+
+    # 3. POST sync with test_nonce_1 and canvas/webgl hashes
+    sync_res_1 = client.post(
+        "/api/v1/sync",
+        json={
+            "timezone": "Asia/Kolkata",
+            "canvas_hash": "a1b2c3d4e5f6g7h8",
+            "webgl_hash": "h8g7f6e5d4c3b2a1",
+            "nonce": test_nonce_1,
+        },
+        headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    )
+    assert sync_res_1.status_code == 200
+
+    # 4. POST sync for a second visit (test_nonce_2) without honeypot yet
+    test_nonce_2 = "test_nonce_2"
+    sync_res_2 = client.post(
+        "/api/v1/sync",
+        json={
+            "timezone": "Asia/Kolkata",
+            "canvas_hash": "canvas_ok",
+            "webgl_hash": "webgl_ok",
+            "nonce": test_nonce_2,
+        },
+        headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    )
+    assert sync_res_2.status_code == 200
+
+    # 5. Trigger Honeypot AFTER sync for test_nonce_2
+    honeypot_res_2 = client.get(f"/api/v1/honeypot?v={test_nonce_2}", follow_redirects=False)
+    assert honeypot_res_2.status_code == 307
+
+    # 6. Retrieve visits and assert fingerprints and honeypot triggers
+    visits = client.get("/api/v1/analytics/visits").json()["items"]
+    # Chronology is newest first: [test_nonce_2, test_nonce_1]
+    
+    # Check test_nonce_2 (honeypot triggered after sync)
+    assert visits[0]["canvas_hash"] == "canvas_ok"
+    assert visits[0]["webgl_hash"] == "webgl_ok"
+    assert visits[0]["is_anomalous"] is True
+    assert "honeypot_triggered" in visits[0]["anomaly_reasons"]
+
+    # Check test_nonce_1 (honeypot triggered before sync)
+    assert visits[1]["canvas_hash"] == "a1b2c3d4e5f6g7h8"
+    assert visits[1]["webgl_hash"] == "h8g7f6e5d4c3b2a1"
+    assert visits[1]["is_anomalous"] is True
+    assert "honeypot_triggered" in visits[1]["anomaly_reasons"]
+
+    # 7. Check anomaly trigger for missing/blank canvas/webgl hashes on desktop
+    res_missing = client.post(
+        "/api/v1/sync",
+        json={
+            "timezone": "Asia/Kolkata",
+            "canvas_hash": "blank",
+            "webgl_hash": "blocked",
+        },
+        headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    )
+    assert res_missing.status_code == 200
+    
+    visits_updated = client.get("/api/v1/analytics/visits").json()["items"]
+    assert visits_updated[0]["is_anomalous"] is True
+    assert "missing_canvas_fingerprint" in visits_updated[0]["anomaly_reasons"]
+    assert "missing_webgl_fingerprint" in visits_updated[0]["anomaly_reasons"]
+
+
+def test_new_heuristics(client, monkeypatch):
+    # Mock GeoIP lookup
+    monkeypatch.setattr(
+        "app.api.tracking.geoip_service.lookup",
+        lambda _ip: GeoResult(
+            city="Mumbai",
+            state="Maharashtra",
+            country="India",
+            geo_timezone="Asia/Kolkata",
+            asn=55836,
+            organization="Reliance Jio",
+            network_type="Residential Broadband",
+            base_confidence=70,
+        ),
+    )
+
+    # 1. Test rDNS parsing: Mock get_rdns_hostname to return a name containing "bengaluru"
+    monkeypatch.setattr(
+        "app.services.integrity.get_rdns_hostname",
+        lambda ip, timeout=1.0: "node-bengaluru-isp.net"
+    )
+
+    # Login to read visits
+    client.post(
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": "correct-horse-battery"},
+    )
+
+    # Trigger a sync with Bengaluru rDNS match
+    res_rdns = client.post(
+        "/api/v1/sync",
+        json={
+            "timezone": "Asia/Kolkata",
+            "canvas_hash": "canvas_rdns",
+            "webgl_hash": "webgl_rdns",
+        },
+        headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    )
+    assert res_rdns.status_code == 200
+
+    visits = client.get("/api/v1/analytics/visits").json()["items"]
+    # The winner should be Bengaluru from Reverse DNS Parsing rather than Mumbai (due to cellular carrier penalty on Mumbai)
+    assert visits[0]["city"] == "Bengaluru"
+    assert "Reverse DNS Parsing" in visits[0]["location_source"]
+
+    # 2. Test Timezone & Locale Cross-Checking
+    # Case A: Timezone mismatch (client in Europe/Berlin, IP is in India)
+    res_tz = client.post(
+        "/api/v1/sync",
+        json={
+            "timezone": "Europe/Berlin",
+            "canvas_hash": "canvas_tz",
+            "webgl_hash": "webgl_tz",
+        },
+        headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    )
+    assert res_tz.status_code == 200
+
+    # Case B: Locale mismatch (client language is German/de-DE, IP is in India)
+    res_locale = client.post(
+        "/api/v1/sync",
+        json={
+            "timezone": "Asia/Kolkata",
+            "language": "de-DE",
+            "accept_language": "de-DE,de;q=0.9",
+            "canvas_hash": "canvas_locale",
+            "webgl_hash": "webgl_locale",
+        },
+        headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    )
+    assert res_locale.status_code == 200
+
+    visits = client.get("/api/v1/analytics/visits").json()["items"]
+    # visits[0] is locale mismatch (newest first)
+    assert "locale_mismatch" in visits[0]["anomaly_reasons"]
+    # visits[1] is timezone mismatch
+    assert "timezone_mismatch" in visits[1]["anomaly_reasons"]
+
+    # 3. Test Device Fingerprint Collision (Proxy Detection)
+    # Perform 3 sync requests from 3 different IPs with the same fingerprint
+    payload_fingerprint = {
+        "timezone": "Asia/Kolkata",
+        "canvas_hash": "collision_canvas",
+        "webgl_hash": "collision_webgl",
+        "screen_resolution": "1080x2400",
+        "cores": 8,
+        "memory": 8,
+        "language": "en-IN",
+    }
+    
+    # Request 1: IP 1.1.1.1
+    res_coll1 = client.post(
+        "/api/v1/sync",
+        json=payload_fingerprint,
+        headers={
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "cf-connecting-ip": "1.1.1.1"
+        }
+    )
+    assert res_coll1.status_code == 200
+
+    # Request 2: IP 2.2.2.2
+    res_coll2 = client.post(
+        "/api/v1/sync",
+        json=payload_fingerprint,
+        headers={
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "cf-connecting-ip": "2.2.2.2"
+        }
+    )
+    assert res_coll2.status_code == 200
+
+    # Request 3: IP 3.3.3.3
+    res_coll3 = client.post(
+        "/api/v1/sync",
+        json=payload_fingerprint,
+        headers={
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "cf-connecting-ip": "3.3.3.3"
+        }
+    )
+    assert res_coll3.status_code == 200
+
+    visits = client.get("/api/v1/analytics/visits").json()["items"]
+    # visits[0] is the 3rd request (newest first)
+    assert "device_collision_detected" in visits[0]["anomaly_reasons"]
+    # visits[1] (2nd request) and visits[2] (1st request) should not have the collision flag
+    if visits[1]["anomaly_reasons"]:
+        assert "device_collision_detected" not in visits[1]["anomaly_reasons"]
+    if visits[2]["anomaly_reasons"]:
+        assert "device_collision_detected" not in visits[2]["anomaly_reasons"]
+
+
+def test_latency_fallback_as_last_resort(client, monkeypatch):
+    # Mock GeoIP lookup to return a Jio mobile carrier in Mumbai
+    # Because of cellular gateway penalty (and mobile carrier type), this will drop confidence under 50.
+    monkeypatch.setattr(
+        "app.api.tracking.geoip_service.lookup",
+        lambda _ip: GeoResult(
+            city="Mumbai",
+            state="Maharashtra",
+            country="India",
+            geo_timezone="Asia/Kolkata",
+            asn=55836,
+            organization="Reliance Jio",
+            network_type="Mobile Carrier", # triggers mobile carrier reductions
+            base_confidence=68,
+        ),
+    )
+
+    # Mock get_rdns_hostname to return a hostname without any location keywords
+    monkeypatch.setattr(
+        "app.services.integrity.get_rdns_hostname",
+        lambda ip, timeout=1.0: "adsl-static-pool.jio.com"
+    )
+
+    # Login first
+    client.post(
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": "correct-horse-battery"},
+    )
+
+    # 1. Trigger a sync with latency bangalore ping (default state: enabled)
+    res = client.post(
+        "/api/v1/sync",
+        json={
+            "timezone": "Asia/Kolkata",
+            "canvas_hash": "canvas_last_resort_enabled",
+            "webgl_hash": "webgl_last_resort_enabled",
+            "latency_bangalore": 12, # Bengaluru ping
+        },
+        headers={"user-agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36"}
+    )
+    assert res.status_code == 200
+
+    visits = client.get("/api/v1/analytics/visits").json()["items"]
+    # The winner should be Bengaluru from Latency Triangulation
+    assert visits[0]["city"] == "Bengaluru"
+    assert visits[0]["location_source"] == "Latency Triangulation"
+
+    # 2. Toggle latency triangulation to disabled
+    res_toggle = client.post(
+        "/api/v1/system/latency/toggle",
+        json={"disabled": True}
+    )
+    assert res_toggle.status_code == 200
+    assert res_toggle.json()["disabled"] is True
+
+    # 3. Trigger a sync with latency bangalore ping (state: disabled)
+    res_disabled = client.post(
+        "/api/v1/sync",
+        json={
+            "timezone": "Asia/Kolkata",
+            "canvas_hash": "canvas_last_resort_disabled",
+            "webgl_hash": "webgl_last_resort_disabled",
+            "latency_bangalore": 12, # Bengaluru ping (should be ignored)
+        },
+        headers={"user-agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36"}
+    )
+    assert res_disabled.status_code == 200
+
+    visits_disabled = client.get("/api/v1/analytics/visits").json()["items"]
+    # The winner should remain Mumbai (since latency is disabled)
+    assert visits_disabled[0]["city"] == "Mumbai"
+    assert visits_disabled[0]["location_source"] == "GeoIP DB"
+
+    # 4. Toggle latency triangulation back to enabled
+    res_restore = client.post(
+        "/api/v1/system/latency/toggle",
+        json={"disabled": False}
+    )
+    assert res_restore.status_code == 200
+    assert res_restore.json()["disabled"] is False
+
+
+
+
+

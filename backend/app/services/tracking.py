@@ -30,7 +30,13 @@ def confidence_score(geo: GeoResult, signals: BrowserSignals, visitor: Visitor |
 
 
 def detect_anomalies(
-    geo: GeoResult, previous: VisitLog | None, now: datetime, confidence: int, agent: ParsedAgent | None = None, signals: BrowserSignals | None = None
+    geo: GeoResult, 
+    previous: VisitLog | None, 
+    now: datetime, 
+    confidence: int, 
+    agent: ParsedAgent | None = None, 
+    signals: BrowserSignals | None = None,
+    ip: str | None = None,
 ) -> list[str]:
     reasons: list[str] = []
     if geo.network_type in {"VPN / Proxy", "VPN Candidate", "VPN", "Proxy"}:
@@ -47,7 +53,7 @@ def detect_anomalies(
         
     if agent and signals:
         from app.services.integrity import detect_client_spoofing
-        reasons.extend(detect_client_spoofing(agent, signals))
+        reasons.extend(detect_client_spoofing(agent, signals, ip=ip, ip_country=geo.country, asn=geo.asn))
         
     return reasons
 
@@ -154,7 +160,8 @@ def resolve_best_location(
     geo: GeoResult,
     signals: BrowserSignals,
     visitor: Visitor | None,
-    passive_confidence: ConfidenceScores
+    passive_confidence: ConfidenceScores,
+    ip: str | None = None,
 ) -> tuple[str | None, str | None, str | None, ConfidenceScores]:
     """Resolves true visitor location by scoring independent candidates and
     picking the highest-confidence one.
@@ -163,6 +170,7 @@ def resolve_best_location(
       1. GeoIP DB / ip-api  (passive_confidence, always present)
       2. ISP Name Parsing   (when ISP org contains a city keyword)
       3. Latency Triangulation (when ping data available)
+      4. Reverse DNS Parsing (when client PTR record contains city keyword)
 
     Agreement between sources boosts confidence; the highest-scoring candidate
     wins.
@@ -180,11 +188,31 @@ def resolve_best_location(
     candidates: list[LocationCandidate] = []
 
     # ── Candidate 1: GeoIP DB / ip-api (always present) ───────────────
+    geo_city_conf = passive_confidence.city
+    geo_state_conf = passive_confidence.state
+    geo_country_conf = passive_confidence.country
+    
+    is_cellular_carrier = geo.asn in {55836, 64065, 45609, 9498, 55410}
+    if is_cellular_carrier:
+        # Penalize cellular gateway accuracy as routing is centralized
+        geo_city_conf = max(0, geo_city_conf - 20)
+        geo_state_conf = max(0, geo_state_conf - 15)
+        
+    geo_overall = overall_confidence(geo_country_conf, geo_state_conf, geo_city_conf)
+    
     candidates.append(LocationCandidate(
         city=geo.city,
         state=geo.state,
         country=geo.country,
-        confidence=passive_confidence,
+        confidence=ConfidenceScores(
+            country=geo_country_conf,
+            state=geo_state_conf,
+            city=geo_city_conf,
+            overall=geo_overall,
+            location_source=passive_confidence.location_source,
+            detail=passive_confidence.detail + " (cellular_carrier_penalty)" if is_cellular_carrier else passive_confidence.detail,
+            reasons=list(passive_confidence.reasons) + ["cellular_gateway_penalty"] if is_cellular_carrier else passive_confidence.reasons,
+        ),
         source_name="GeoIP DB",
     ))
 
@@ -229,9 +257,14 @@ def resolve_best_location(
     is_location_granted = signals.latitude is not None and signals.longitude is not None
     
     latency_candidate: LocationCandidate | None = None
-    has_pings = not is_location_granted and any(
-        getattr(signals, f"latency_{c}") is not None
-        for c in ["mumbai", "hyderabad", "delhi", "bangalore", "chennai", "kochi", "mangalore", "kolkata"]
+    from app.config import settings
+    has_pings = (
+        not settings.disable_latency_triangulation 
+        and not is_location_granted 
+        and any(
+            getattr(signals, f"latency_{c}") is not None
+            for c in ["mumbai", "hyderabad", "delhi", "bangalore", "chennai", "kochi", "mangalore", "kolkata"]
+        )
     )
     if has_pings and (geo.country == "India" or not geo.country):
         pings = {
@@ -289,6 +322,29 @@ def resolve_best_location(
                 source_name="Latency Triangulation",
             )
             candidates.append(latency_candidate)
+
+    # ── Candidate 4: Reverse DNS PTR Parsing ────────────────────────────
+    from app.services.integrity import resolve_rdns_location
+    rdns_city, rdns_state, rdns_country = None, None, None
+    if ip:
+        rdns_city, rdns_state, rdns_country = resolve_rdns_location(ip)
+        if any((rdns_city, rdns_state, rdns_country)):
+            reasons = list(passive_confidence.reasons) + ["rdns_ptr_keyword_match"]
+            candidates.append(LocationCandidate(
+                city=rdns_city,
+                state=rdns_state,
+                country=rdns_country,
+                confidence=ConfidenceScores(
+                    country=95 if rdns_country else 0,
+                    state=90 if rdns_state else 0,
+                    city=85 if rdns_city else 0,
+                    overall=overall_confidence(95 if rdns_country else 0, 90 if rdns_state else 0, 85 if rdns_city else 0),
+                    location_source="Reverse DNS Parsing",
+                    detail=f"rdns_match: {rdns_city or ''}",
+                    reasons=reasons,
+                ),
+                source_name="Reverse DNS Parsing",
+            ))
 
     # ── Agreement / Disagreement Adjustments ──────────────────────────
     if len(candidates) > 1:
@@ -356,7 +412,24 @@ def resolve_best_location(
                         )
 
     # ── Pick the best candidate ───────────────────────────────────────
-    best = max(candidates, key=lambda c: c.confidence.overall)
+    non_latency_candidates = [c for c in candidates if c.source_name != "Latency Triangulation"]
+    latency_candidates = [c for c in candidates if c.source_name == "Latency Triangulation"]
+
+    # Actively prioritize non-latency candidates that successfully resolved a location with >= 50 confidence
+    strong_non_latency = [
+        c for c in non_latency_candidates
+        if c.confidence.overall >= 50 and c.city and c.city != "Unknown"
+    ]
+
+    if strong_non_latency:
+        best = max(strong_non_latency, key=lambda c: c.confidence.overall)
+    elif latency_candidates:
+        # If all other methods return low confidence or miss resolved details, use latency as last resort
+        best = latency_candidates[0]
+    elif non_latency_candidates:
+        best = max(non_latency_candidates, key=lambda c: c.confidence.overall)
+    else:
+        best = candidates[0]
 
     logger.info(
         "[GEOLOCATION] Ranked Resolution: %d candidates | Winner: %s (%s, %s, %s) conf=%d | %s",
@@ -387,6 +460,7 @@ def record_visit(
     class_reason: str | None = None,
     tracking_status: str = "persisted",
     tracking_failure_reason: str | None = None,
+    ip: str | None = None,
 ) -> VisitLog:
     now = utcnow()
     visitor = db.scalar(select(Visitor).where(Visitor.visitor_hash == visitor_hash))
@@ -422,7 +496,7 @@ def record_visit(
     # ── Ranked passive resolution (no GPS available) ──────────────────
     if not inline_gps_used:
         effective_city, effective_state, effective_country, effective_confidence = resolve_best_location(
-            geo, signals, visitor, confidence
+            geo, signals, visitor, confidence, ip=ip
         )
 
     if not inline_gps_used and visitor and any((visitor.current_city, visitor.current_state, visitor.current_country)):
@@ -498,7 +572,7 @@ def record_visit(
     visitor.current_city_confidence = confidence_level(effective_confidence.city)
     visitor.current_location_confidence = confidence_level(effective_confidence.overall)
 
-    reasons = detect_anomalies(geo, previous, now, confidence.overall, agent, signals)
+    reasons = detect_anomalies(geo, previous, now, confidence.overall, agent, signals, ip=ip)
     visit = VisitLog(
         visitor_id=visitor.id,
         timestamp=now,
@@ -537,6 +611,8 @@ def record_visit(
         save_data=signals.save_data,
         has_private_ip=signals.has_private_ip,
         ping_jitter=signals.ping_jitter,
+        canvas_hash=signals.canvas_hash,
+        webgl_hash=signals.webgl_hash,
         is_anomalous=bool(reasons),
         anomaly_reasons=reasons or None,
         is_crawler=is_crawler,
@@ -561,6 +637,9 @@ def record_visit(
         
     db.commit()
     db.refresh(visit)
+    if signals.nonce:
+        from app.services.integrity import register_visit_nonce
+        register_visit_nonce(signals.nonce, visit.id)
     return visit
 
 
@@ -627,6 +706,8 @@ def record_failed_visit(
             save_data=signals.save_data if signals else None,
             has_private_ip=signals.has_private_ip if signals else None,
             ping_jitter=signals.ping_jitter if signals else None,
+            canvas_hash=signals.canvas_hash if signals else None,
+            webgl_hash=signals.webgl_hash if signals else None,
         )
         db.add(visit)
         db.commit()

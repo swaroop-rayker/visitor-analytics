@@ -93,6 +93,8 @@ class VisitLog(Base):
     save_data: Mapped[bool | None] = mapped_column(Boolean)
     has_private_ip: Mapped[bool | None] = mapped_column(Boolean)
     ping_jitter: Mapped[float | None] = mapped_column(Float)
+    canvas_hash: Mapped[str | None] = mapped_column(String(64))
+    webgl_hash: Mapped[str | None] = mapped_column(String(64))
     visitor: Mapped[Visitor] = relationship(back_populates="visits")
 
 

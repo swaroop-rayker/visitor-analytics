@@ -227,6 +227,20 @@ export default function TimelinePage() {
                             {visit.gpu !== null && <span className="truncate" title={visit.gpu || undefined}>GPU: {visit.gpu}</span>}
                           </div>
                         )}
+                        {(visit.canvas_hash || visit.webgl_hash) && (
+                          <div className="mt-1.5 flex flex-col gap-0.5 text-[11px] font-mono text-muted-foreground/75 bg-muted/20 p-1.5 rounded border border-border max-w-[220px]">
+                            {visit.canvas_hash && (
+                              <span className="truncate" title={`Canvas: ${visit.canvas_hash}`}>
+                                Canvas: {visit.canvas_hash === "blank" ? "⚠️ Blank/Stubbed" : visit.canvas_hash === "blocked" ? "⚠️ Blocked" : visit.canvas_hash.slice(0, 10) + "..."}
+                              </span>
+                            )}
+                            {visit.webgl_hash && (
+                              <span className="truncate" title={`WebGL: ${visit.webgl_hash}`}>
+                                WebGL: {visit.webgl_hash === "blocked" ? "⚠️ Blocked" : visit.webgl_hash.slice(0, 10) + "..."}
+                              </span>
+                            )}
+                          </div>
+                        )}
                         {visit.is_anomalous && visit.anomaly_reasons && (
                           <div className="mt-2 flex flex-wrap gap-1 max-w-[220px]">
                             {visit.anomaly_reasons.map((reason) => {
@@ -236,11 +250,17 @@ export default function TimelinePage() {
                               else if (reason === "gpu_os_mismatch") { label = "Spoof: GPU Mismatch"; isSpoof = true; }
                               else if (reason === "ios_memory_leak") { label = "Spoof: iOS Emulator"; isSpoof = true; }
                               else if (reason === "suspicious_hardware_capacity") { label = "Spoof: Fake Specs"; isSpoof = true; }
+                              else if (reason === "missing_canvas_fingerprint") { label = "Missing Canvas"; isSpoof = true; }
+                              else if (reason === "missing_webgl_fingerprint") { label = "Missing WebGL"; isSpoof = true; }
+                              else if (reason === "honeypot_triggered") { label = "Honeypot Triggered 🚨"; isSpoof = true; }
                               else if (reason === "probable_vpn") { label = "VPN"; }
                               else if (reason === "hosting_provider") { label = "Datacenter/Cloud"; }
                               else if (reason === "rapid_country_change") { label = "Geo-jump (Country)"; }
                               else if (reason === "rapid_city_change") { label = "Geo-jump (City)"; }
                               else if (reason === "historical_location_inconsistency") { label = "Location Drift"; }
+                              else if (reason === "timezone_mismatch") { label = "Timezone Mismatch"; }
+                              else if (reason === "locale_mismatch") { label = "Locale Mismatch"; }
+                              else if (reason === "device_collision_detected") { label = "Device Collision 🚨"; isSpoof = true; }
                               
                               return (
                                 <Badge 

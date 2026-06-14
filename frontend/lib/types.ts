@@ -50,14 +50,22 @@ export type Visit = {
   has_private_ip: boolean | null;
   ping_jitter: number | null;
   screen_resolution: string | null;
+  canvas_hash: string | null;
+  webgl_hash: string | null;
 };
 export type Page<T> = {
   items: T[]; meta: { page: number; page_size: number; total: number };
 };
 export type Health = {
   status: "healthy" | "degraded"; database_status: string; database_size_bytes: number;
-  disk_used_percent: number; memory_used_percent: number; geoip_city_status: string;
-  geoip_asn_status: string; last_backup_time: string | null; uptime_seconds: number;
+  disk_used_percent: number; memory_used_percent: number;
+  memory_used_bytes: number; memory_total_bytes: number;
+  disk_used_bytes: number; disk_total_bytes: number;
+  geoip_city_status: string;
+  geoip_asn_status: string;
+  disable_maxmind_db: boolean;
+  disable_latency_triangulation: boolean;
+  last_backup_time: string | null; uptime_seconds: number;
   raw_retention_days: number; redirect_target_url: string; geoip_update_in_progress: boolean;
   geoip_last_error: string | null;
 };
