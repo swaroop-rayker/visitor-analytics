@@ -9,17 +9,22 @@ This platform is designed to be **completely free to host indefinitely** on clou
 ## Key Features & Heuristics
 
 ### 1. Multi-Candidate Location Inference
-Instead of relying on single IP geolocation lookups, this platform scores and ranks location candidates from multiple independent sources:
-* **Passive GeoIP (GeoLite2)**: Local MaxMind databases.
-* **ISP Name Parsing**: Matches physical city markers inside the network organization name.
-* **Reverse DNS Pointer (rDNS) Parsing**: Runs non-blocking background DNS PTR lookups to parse regional/circle keywords (e.g., `pune`, `kochi`, `delhi`) directly from router hostnames.
-* **Latency Triangulation**: Measures round-trip time (RTT) from the browser to 8 Indian regional servers using an optimized Keep-Alive connection (discards first TCP handshake, averages 2nd/3rd pings). *(Can be persistently toggled ON/OFF from the dashboard)*.
-* **Browser Geolocation API (Consented)**: Optional, explicit GPS coordinate lookup (the gold standard fallback if passive methods are insufficient).
+Instead of relying on single IP database queries, this platform generates, scores, and resolves location candidates from multiple independent sources:
+* **Passive GeoIP (GeoLite2)**: Uses local MaxMind databases to resolve the client's IP to country, state, and city. It acts as the baseline candidate, initializing confidence scores based on database accuracy.
+* **ISP Name Parsing**: Analyzes the organization/ISP string from the IP lookup. Many local broadband and cable providers embed regional names (e.g., "Kochi Cable", "Bengaluru Broadband") directly inside their ISP registration. If matched, it generates a high-confidence candidate.
+* **Reverse DNS Pointer (rDNS) Parsing**: Runs a non-blocking DNS PTR lookup in a separate background thread with a strict 1.0-second timeout limit. Many telecom routers embed regional/circle tags (e.g., `pune`, `kochi`, `delhi`, `kar`) directly inside their hostnames. If matched, it generates a location candidate with a city confidence of 85.
+* **Latency Triangulation**: Measures round-trip time (RTT) from the visitor's browser to 8 regional Indian endpoints (AWS Mumbai, AWS Hyderabad, AWS Delhi, IISc Bangalore, IIT Madras, CUSAT Kochi, NITK Surathkal, and ISI Kolkata). The client runs three consecutive fetches: the first warms up the TCP/TLS connection, and the 2nd/3rd are averaged (reusing HTTP Keep-Alive) to find the closest server. This is used as a last resort fallback if other passive methods have low confidence ($<50$). *(Can be persistently toggled ON/OFF from the dashboard settings)*.
+* **Browser Geolocation API (Consented)**: Request-level browser coordinate capture. Bypasses passive estimation and uses reverse geocoding to resolve exact city, state, and country coordinates with high confidence.
 
-### 2. Mobile Carrier Gateway Adjustments
+### 2. Classification and Identification System
+* **HMAC-Based Visitor Hashing**: To uniquely identify returning browsers without storing PII (like IP addresses), the platform generates a unique signature combining the browser's User-Agent, language, timezone, platform, and screen resolution. This signature is hashed using SHA-256 and salted with a server-side `FINGERPRINT_SECRET`, protecting visitor privacy.
+* **Scraper & Bot Classification**: Evaluates incoming requests against user-agent signatures, hosting provider ASN lists, data center IP ranges, and request telemetry. It classifies traffic into categories: `"Social Media Crawler"`, `"Search Engine Crawler"`, `"Security Scanner"`, `"Monitoring Service"`, or `"Known Bot"`, and isolates their logs from primary dashboard analytics.
+* **Agreement & Conflict Scoring**: When multiple candidates are generated, the system checks for agreement. If candidates from different sources (e.g., GeoIP and rDNS) agree on the city, they receive confidence boosts (+8 city, +5 state). If they disagree, the passive GeoIP city confidence is penalized (-5 city) to favor the specialized parsed sources. The highest-scoring candidate wins the resolution.
+
+### 3. Mobile Carrier Gateway Adjustments
 Applies a confidence penalty (-20 city, -15 state) to passive GeoIP results for known cellular carriers (Jio, Airtel, Vi) because carrier networks dynamically route IPs through centralized metropolitan packet gateways, making passive databases highly inaccurate.
 
-### 3. Anti-Spoofing & Bot Telemetry
+### 4. Anti-Spoofing & Bot Telemetry
 * **Headless Browser Detection**: Flags software GPUs (SwiftShader, llvmpipe, Mesa) commonly used by headless scraper scripts.
 * **GPU & OS Cross-Checking**: Detects emulators (e.g., an Intel GPU claiming to be an iOS device).
 * **iOS Memory Protection**: Identifies emulated Safari browsers by checking if memory details are leaked (iOS devices block memory details to prevent fingerprinting).
