@@ -19,7 +19,7 @@ class VisitorClassificationResult:
 
 CRAWLER_SIGNATURES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"facebookexternalhit|facebot", re.I), "Social Media Crawler"),
-    (re.compile(r"instagram|meta-externalagent", re.I), "Social Media Crawler"),
+    (re.compile(r"instagrambot|instagram-scraper|meta-externalagent", re.I), "Social Media Crawler"),
     (re.compile(r"twitterbot|xbot", re.I), "Social Media Crawler"),
     (re.compile(r"linkedinbot|slackbot|discordbot|telegrambot|whatsapp", re.I), "Social Media Crawler"),
     (re.compile(r"googlebot|bingbot|duckduckbot|yandexbot|baiduspider", re.I), "Search Engine Crawler"),

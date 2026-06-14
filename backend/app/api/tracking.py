@@ -398,7 +398,7 @@ def tracking_page(
     is_in_app = any(k in ua_lower for k in ["instagram", "fban", "fbav", "fb_iab", "threads"])
     is_bot = any(k in ua_lower for k in ["bot", "crawler", "spider", "facebookexternalhit", "facebot", "meta-externalagent"])
     
-    if is_in_app or is_bot:
+    if is_bot:
         logger.info("[TRACKER_TRACE] Immediate redirect triggered for UA: %s | In-app: %s | Bot: %s", user_agent, is_in_app, is_bot)
         try:
             _record(request, BrowserSignals(), db)

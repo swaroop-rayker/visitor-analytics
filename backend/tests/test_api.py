@@ -119,6 +119,65 @@ def test_tracking_page_has_strict_privacy_headers(client):
     assert "Share location, then continue" in response.text
 
 
+def test_instagram_webview_is_not_redirected_and_not_crawler(client, monkeypatch):
+    from app.services.geoip import GeoResult
+    # 1. Instagram WebView User-Agent should NOT be immediately redirected on /go
+    insta_ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 14_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 172.0.0.22.121"
+    response = client.get("/go", headers={"user-agent": insta_ua})
+    assert response.status_code == 200
+    assert "Share location, then continue" in response.text
+
+    # 2. Instagram WebView User-Agent sync should be classified as a standard visitor, not a crawler
+    monkeypatch.setattr(
+        "app.api.tracking.geoip_service.lookup",
+        lambda _ip: GeoResult(
+            city="Bengaluru", 
+            state="Karnataka", 
+            country="India",
+            geo_timezone="Asia/Kolkata",
+            asn=55836,
+            organization="Reliance Jio",
+            network_type="Mobile Carrier",
+            base_confidence=80
+        ),
+    )
+    
+    sync_res = client.post(
+        "/api/v1/sync",
+        json={
+            "timezone": "Asia/Kolkata",
+            "canvas_hash": "insta_canvas",
+            "webgl_hash": "insta_webgl",
+            "nonce": "some_nonce_for_insta",
+        },
+        headers={"user-agent": insta_ua}
+    )
+    assert sync_res.status_code == 200
+    
+    # Authenticate to check analytics
+    client.post(
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": "correct-horse-battery"},
+    )
+    
+    summary = client.get("/api/v1/analytics/summary").json()
+    assert summary["total_visits"] == 1
+    assert summary["crawler_visits"] == 0
+    
+    visits = client.get("/api/v1/analytics/visits").json()
+    assert visits["meta"]["total"] == 1
+
+
+def test_known_crawler_is_immediately_redirected_on_go(client):
+    response = client.get(
+        "/go", 
+        headers={"user-agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_patched.html)"}, 
+        follow_redirects=False
+    )
+    assert response.status_code == 307
+    assert response.headers["location"].startswith("https://")
+
+
 def test_validation_is_bounded(client):
     response = client.post("/api/v1/sync", json={"timezone": "x" * 81})
     assert response.status_code == 422
