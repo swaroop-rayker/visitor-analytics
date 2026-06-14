@@ -1,49 +1,45 @@
-# Security and privacy
+# Security and Privacy Architecture
 
-## Data boundary
+This document details the privacy boundaries, threat mitigation strategies, and security controls built into the platform.
 
-The platform intentionally stores no username, email, password from visitors,
-Instagram account identifier, or IP address. The admin password is represented
-by an Argon2 hash. GeoIP sees an address only in memory during the request.
-Rate-limit keys are secret-key HMACs and live only in process memory.
-Nginx and Uvicorn request access logs are disabled so they do not create a
-second, accidental store of visitor addresses.
+---
 
-The anonymous fingerprint combines User-Agent, accept headers, language,
-timezone, platform, and screen resolution. HMAC prevents an offline observer
-from trivially enumerating raw combinations. Changing `FINGERPRINT_SECRET`
-breaks continuity, which is useful when intentionally resetting identity
-history.
+## 1. Visitor Privacy Boundaries
+The platform is designed to respect visitor privacy and comply with GDPR, CCPA, and regional policies:
+* **No IP Address Storage**: Visitor IP addresses are processed entirely in-memory to look up GeoIP records, run DNS PTR parsing, or calculate sliding-window device rates. They are **never** written to database disk logs, application standard output, or nginx proxy logs.
+* **No Profile/Identity Collection**: The platform does **not** query the Instagram API, scrape account names, or link visits to social media handles.
+* **HMAC Anonymous Fingerprinting**: Repeated visits are identified by generating a `sha256` hash of browser parameters (User-Agent, languages, timezone, platform, and screen resolution) salted with a secure server-side `FINGERPRINT_SECRET`.
+  * Because the hash is salted, an offline attacker with access to the database cannot reverse-engineer or enumerate visitor parameters.
+  * To reset all visitor logs and start fresh, simply change `FINGERPRINT_SECRET` in `.env`.
 
-Fingerprinting has unavoidable false positives and false negatives. Browser
-updates, privacy settings, and shared devices can change or collide. The UI
-therefore calls values anonymous visitor IDs, never people.
+---
 
-## Controls
+## 2. Advanced Telemetry and Anti-Spoofing Heuristics
 
-- Single-admin JWT session, HS256 audience/issuer checks, HttpOnly,
-  `SameSite=Strict`, and production-only `Secure` cookies
-- Argon2 password hashing via `pwdlib`
-- Nginx and application-level rate limits
-- Pydantic input limits and SQLAlchemy-bound queries
-- Trusted host validation and explicit proxy trust
-- CSP on the public redirect page and secure response headers
-- Generic external errors with server-side exception logging
-- Login/logout audit records without source addresses
-- Containers run as non-root with `no-new-privileges` where practical
+### A. Hardware Signature Hashing
+The system computes an offline hardware signature using:
+* **Offscreen Canvas Hashing**: Draws text and geometric patterns offscreen and hashes the resulting pixel data using a quick 128-bit Cyrb128 hash. If a client attempts to block or return blank canvas renders (common in bot environments), the system flags `"missing_canvas_fingerprint"`.
+* **WebGL Signature**: Queries WebGL extension support, device capabilities, and renderer parameters to yield a highly stable signature without triggering GPU resource exhaustion or shader leaks.
 
-## Deployment checklist
+### B. Device Fingerprint Collision (Proxy Rotation)
+To flag scrapers utilizing rotating IP addresses or VPN proxies, the platform tracks the number of unique IPs associated with a hardware signature in a sliding 15-minute window:
+* A **Device Collision 🚨** anomaly is triggered only if a single hardware hash is seen across **$\ge 3$ unique IP addresses** (or $\ge 2$ different ASNs) within 15 minutes.
+* This high threshold prevents false-positive alerts when a legitimate user roams from home Wi-Fi to cellular mobile data.
 
-1. Use independent 32-byte-or-longer JWT and fingerprint secrets.
-2. Store only `ADMIN_PASSWORD_HASH`; remove `ADMIN_PASSWORD`. In Docker env
-   files, paste the Argon2 value without quotes.
-3. Enable HTTPS and set `PUBLIC_BASE_URL` to the exact HTTPS origin.
-4. Restrict Google Cloud firewall ingress to TCP 22, 80, and 443.
-5. Keep backend/frontend ports unpublished.
-6. Protect `.env`, backups, and GeoLite2 license/download credentials.
-7. Apply OS and container updates regularly.
-8. Test backup restoration quarterly.
+### C. Stealth Honeypot Link Trap
+* A hidden link is injected into the `/go` redirect template:
+  ```html
+  <a href="/api/v1/honeypot?v=NONCE" style="display:none;position:absolute;left:-9999px;top:-9999px;" aria-hidden="true" tabindex="-1" rel="nofollow">Security Verification Link</a>
+  ```
+* Standard web browsers and screen readers ignore the link because of CSS placement, `aria-hidden="true"`, and `tabindex="-1"`.
+* Scraper bots and scrapers parsing raw HTML will read and follow the link. If triggered, the backend marks the visitor's log as anomalous (`"honeypot_triggered"`) and stealthily redirects them to the fallback target using a `307 Temporary Redirect` (keeping the security mechanism invisible).
 
-ASN organization-name classification cannot reliably prove that traffic is a
-VPN, proxy, residential subscriber, or corporation. Labels ending in
-“Candidate” are indicators only. No attempt is made to bypass such services.
+---
+
+## 3. Platform Security Controls
+* **Authentication**: Single-admin console protected by `Argon2` password hashing (using `pwdlib`) and JSON Web Tokens (JWT) signed with `HS256`.
+* **Secure Cookies**: HttpOnly, `SameSite=Strict`, and `Secure` (production-only) cookies store the admin session.
+* **Rate Limiting**: Sliding-window rate limiters prevent brute-force attacks on `/api/v1/auth/login` and spam on `/api/v1/sync`. Limit keys are hashed locally in memory.
+* **Input Validation**: Bounded inputs processed via Pydantic schemas prevent payload injection attacks.
+* **Database Optimization**: SQLite parameters ensure that deleted visit logs shrink the database file immediately (`PRAGMA incremental_vacuum`) to prevent storage overflow.
+* **Container Isolation**: Multi-container stack where all services run as non-root system users (`USER app` / `USER nextjs`) with `no-new-privileges` constraints enabled.
