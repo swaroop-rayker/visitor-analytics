@@ -1,9 +1,6 @@
 # Private Visitor Analytics
 
 A privacy-preserving, self-hosted visitor analytics platform for custom bio links (e.g. Instagram). It records visits, estimates coarse location, performs bot/spoof analysis, and provides a real-time admin dashboard.
-
-This platform is designed to be **completely free to host indefinitely** on cloud free tiers (like GCP's `e2-micro` in US regions with a 30 GB standard disk).
-
 ---
 
 ## Key Features & Heuristics
