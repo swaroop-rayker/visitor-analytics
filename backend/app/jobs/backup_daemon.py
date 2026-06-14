@@ -20,8 +20,13 @@ def create_backup(backup_dir: Path = Path("/backups")) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     temporary = backup_dir / f".analytics-{timestamp}.db"
     destination = backup_dir / f"analytics-{timestamp}.db.gz"
-    with sqlite3.connect(source) as source_db, sqlite3.connect(temporary) as target_db:
+    source_db = sqlite3.connect(source)
+    target_db = sqlite3.connect(temporary)
+    try:
         source_db.backup(target_db)
+    finally:
+        target_db.close()
+        source_db.close()
     with temporary.open("rb") as raw, gzip.open(destination, "wb", compresslevel=6) as compressed:
         shutil.copyfileobj(raw, compressed)
     temporary.unlink(missing_ok=True)
@@ -51,4 +56,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

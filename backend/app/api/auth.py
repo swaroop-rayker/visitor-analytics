@@ -39,12 +39,13 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
         from fastapi import HTTPException
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_access_token(settings.admin_username)
+    is_secure = settings.is_production or request.headers.get("x-forwarded-proto") == "https" or request.url.scheme == "https"
     response.set_cookie(
         "access_token",
         token,
         httponly=True,
-        secure=settings.is_production,
-        samesite="strict",
+        secure=is_secure,
+        samesite="lax",
         max_age=settings.access_token_minutes * 60,
         path="/",
     )

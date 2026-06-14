@@ -22,6 +22,7 @@ if settings.database_url.startswith("sqlite"):
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA busy_timeout=15000")
         cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA auto_vacuum=INCREMENTAL")
         cursor.close()
 
 

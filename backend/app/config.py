@@ -24,14 +24,20 @@ class Settings(BaseSettings):
     backup_hour_utc: int = 2
     geoip_city_db: str = "./geoip/GeoLite2-City.mmdb"
     geoip_asn_db: str = "./geoip/GeoLite2-ASN.mmdb"
+    maxmind_license_key: str | None = None
+    use_external_geoip_api: bool = True
+    reverse_geocoding_enabled: bool = True
+    reverse_geocoding_url: str = "https://nominatim.openstreetmap.org/reverse"
+    reverse_geocoding_user_agent: str = "visitor-analytics-personal/1.0"
     trusted_hosts: str = "localhost,127.0.0.1,testserver"
-    forwarded_allow_ips: str = "127.0.0.1"
+    forwarded_allow_ips: str = "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,*"
     login_rate_limit_per_minute: int = 5
     track_rate_limit_per_minute: int = 30
 
-    @field_validator("public_base_url", "redirect_target_url")
+    @field_validator("public_base_url")
     @classmethod
-    def validate_http_url(cls, value: str) -> str:
+    def validate_public_url(cls, value: str) -> str:
+        value = value.strip()
         parsed = urlparse(value)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("must be an absolute HTTP(S) URL")
@@ -39,9 +45,27 @@ class Settings(BaseSettings):
             raise ValueError("URL contains control characters")
         return value.rstrip("/")
 
+    @field_validator("redirect_target_url")
+    @classmethod
+    def validate_redirect_url(cls, value: str) -> str:
+        value = value.strip()
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("must be an absolute HTTP(S) URL")
+        if any(ord(char) < 32 for char in value):
+            raise ValueError("URL contains control characters")
+        return value
+
     @property
     def trusted_host_list(self) -> list[str]:
-        return [item.strip() for item in self.trusted_hosts.split(",") if item.strip()]
+        hosts = [item.strip() for item in self.trusted_hosts.split(",") if item.strip()]
+        try:
+            parsed = urlparse(self.public_base_url)
+            if parsed.hostname and parsed.hostname not in hosts:
+                hosts.append(parsed.hostname)
+        except Exception:
+            pass
+        return hosts
 
     @property
     def forwarded_allow_ip_list(self) -> list[str]:

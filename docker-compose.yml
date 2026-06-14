@@ -13,7 +13,8 @@ services:
     volumes:
       - analytics_data:/data
       - backups:/backups:ro
-      - ./geoip:/geoip:ro
+      - ./geoip:/geoip
+      - ${ENV_FILE:-.env}:/app/.env
     expose:
       - "8000"
     healthcheck:

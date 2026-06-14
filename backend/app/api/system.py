@@ -1,21 +1,38 @@
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import psutil
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import get_db
 from app.dependencies import require_admin
-from app.schemas import HealthResponse
+from app.schemas import HealthResponse, UpdateRedirectRequest
 from app.services.geoip import geoip_service
+from app.models import AuditLog
 
 router = APIRouter(prefix="/system", tags=["system"], dependencies=[Depends(require_admin)])
 STARTED_AT = time.monotonic()
+
+
+def audit(db: Session, action: str, actor: str, outcome: str, details: dict | None = None) -> None:
+    try:
+        db.add(
+            AuditLog(
+                timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
+                action=action,
+                actor=actor[:80],
+                outcome=outcome,
+                details=details,
+            )
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
 
 
 def _database_path() -> Path | None:
@@ -49,17 +66,119 @@ def health(db: Session = Depends(get_db)) -> HealthResponse:
         disk = psutil.disk_usage(disk_root).percent
     except OSError:
         size, disk = 0, 0.0
-    degraded = database_status != "available" or not geoip_service.city_available
+        
+    from app.services import geoip_updater
+    
+    city_db_path = Path(settings.geoip_city_db)
+    asn_db_path = Path(settings.geoip_asn_db)
+    
+    def _db_status(db_path: Path, service_available: bool) -> str:
+        if geoip_updater.GEOIP_UPDATE_IN_PROGRESS:
+            return "updating"
+        if not service_available or not db_path.is_file():
+            return "missing"
+        try:
+            mtime = db_path.stat().st_mtime
+            age_days = (datetime.now() - datetime.fromtimestamp(mtime)).days
+            if age_days < 7:
+                return "up_to_date"
+            return "update_available"
+        except OSError:
+            return "missing"
+
+    city_status = _db_status(city_db_path, geoip_service.city_available)
+    asn_status = _db_status(asn_db_path, geoip_service.asn_available)
+    
+    degraded = database_status != "available" or city_status == "missing"
+    
     return HealthResponse(
         status="degraded" if degraded else "healthy",
         database_status=database_status,
         database_size_bytes=size,
         disk_used_percent=disk,
         memory_used_percent=psutil.virtual_memory().percent,
-        geoip_city_status="available" if geoip_service.city_available else "missing",
-        geoip_asn_status="available" if geoip_service.asn_available else "missing",
+        geoip_city_status=city_status,
+        geoip_asn_status=asn_status,
         last_backup_time=_last_backup(),
         uptime_seconds=int(time.monotonic() - STARTED_AT),
         raw_retention_days=settings.raw_retention_days,
+        redirect_target_url=settings.redirect_target_url,
+        geoip_update_in_progress=geoip_updater.GEOIP_UPDATE_IN_PROGRESS,
+        geoip_last_error=geoip_updater.LAST_GEOIP_UPDATE_ERROR,
     )
+
+
+@router.post("/config/redirect")
+def update_redirect(
+    payload: UpdateRedirectRequest,
+    admin: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    new_url = payload.redirect_target_url
+    
+    # 1. Update the .env file
+    from app.services.config_updater import update_env_file
+    env_updated = update_env_file("REDIRECT_TARGET_URL", new_url)
+    
+    # 2. Update in-memory settings
+    settings.redirect_target_url = new_url
+    
+    # 3. Clear settings cache
+    from app.config import get_settings
+    get_settings.cache_clear()
+    
+    # 4. Audit this configuration change
+    audit(db, "update_redirect_url", admin, "success", {"redirect_url": new_url, "env_updated": env_updated})
+        
+    return {
+        "success": True,
+        "redirect_target_url": new_url,
+        "env_updated": env_updated,
+    }
+
+
+@router.post("/geoip/update")
+def trigger_geoip_update(
+    background_tasks: BackgroundTasks,
+    admin: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    has_key = bool(getattr(settings, "maxmind_license_key", None))
+    
+    # Check if already up-to-date
+    city_db_path = Path(settings.geoip_city_db)
+    asn_db_path = Path(settings.geoip_asn_db)
+    
+    def _is_up_to_date(path: Path) -> bool:
+        if not path.is_file():
+            return False
+        try:
+            mtime = path.stat().st_mtime
+            return (datetime.now() - datetime.fromtimestamp(mtime)).days < 7
+        except OSError:
+            return False
+
+    if _is_up_to_date(city_db_path) and _is_up_to_date(asn_db_path):
+        return {
+            "success": True,
+            "detail": "Databases are already up to date.",
+            "has_license_key": has_key,
+            "initiated": False
+        }
+        
+    def run_update_sync():
+        from app.services.geoip_updater import download_and_update_geoip
+        success = download_and_update_geoip()
+        from app.db import SessionLocal
+        with SessionLocal() as async_db:
+            audit(async_db, "geoip_update", admin, "success" if success else "failed")
+
+    background_tasks.add_task(run_update_sync)
+    
+    return {
+        "success": True,
+        "detail": "GeoIP update initiated in background" if has_key else "Update initiated, but MAXMIND_LICENSE_KEY is not configured",
+        "has_license_key": has_key,
+        "initiated": True
+    }
 

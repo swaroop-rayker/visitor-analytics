@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  Activity, BarChart3, Clock3, HeartPulse, LogOut, MapPinned, Users,
+  Activity, BarChart3, Clock3, HeartPulse, LogOut, MapPinned, Users, Bug,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -16,6 +16,7 @@ const navigation = [
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/timeline", label: "Timeline", icon: Clock3 },
   { href: "/system", label: "System Health", icon: HeartPulse },
+  { href: "/debug", label: "Debug Logs", icon: Bug },
 ];
 
 function Navigation({ mobile = false }: { mobile?: boolean }) {

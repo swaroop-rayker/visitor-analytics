@@ -1,7 +1,7 @@
 "use client";
 
 import type { EChartsOption } from "echarts";
-import { Building2, MapPin, Repeat2, Route, Users } from "lucide-react";
+import { Bot, Building2, Globe2, MapPin, Repeat2, Route, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Chart } from "@/components/chart";
 import { ErrorState, LoadingState } from "@/components/data-state";
@@ -35,10 +35,12 @@ export default function OverviewPage() {
   return (
     <>
       <PageHeader title="Overview" description="A concise view of traffic to your tracked link." />
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
         <StatCard label="Total visits" value={summary.total_visits} icon={Route} />
         <StatCard label="Unique visitors" value={summary.unique_visitors} icon={Users} />
         <StatCard label="Returning" value={summary.returning_visitors} icon={Repeat2} />
+        <StatCard label="Crawler visits" value={summary.crawler_visits} icon={Bot} />
+        <StatCard label="Top country" value={summary.top_country || "Unknown"} icon={Globe2} />
         <StatCard label="Top city" value={summary.top_city || "Unknown"} icon={Building2} hint={`${summary.average_confidence}% avg confidence`} />
         <StatCard label="Top state" value={summary.top_state || "Unknown"} icon={MapPin} />
       </section>

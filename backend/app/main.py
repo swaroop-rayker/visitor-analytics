@@ -40,7 +40,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", settings.public_base_url],
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type"],
 )
 

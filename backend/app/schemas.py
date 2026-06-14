@@ -12,19 +12,60 @@ class LoginRequest(BaseModel):
 class BrowserSignals(BaseModel):
     timezone: str | None = Field(default=None, max_length=80)
     language: str | None = Field(default=None, max_length=32)
+    accept_language: str | None = Field(default=None, max_length=256)
     platform: str | None = Field(default=None, max_length=80)
     screen_resolution: str | None = Field(default=None, max_length=32)
+    latency_mumbai: float | None = Field(default=None, ge=0)
+    latency_hyderabad: float | None = Field(default=None, ge=0)
+    latency_delhi: float | None = Field(default=None, ge=0)
+    latency_bangalore: float | None = Field(default=None, ge=0)
+    latency_chennai: float | None = Field(default=None, ge=0)
+    latency_kochi: float | None = Field(default=None, ge=0)
+    latency_mangalore: float | None = Field(default=None, ge=0)
+    latency_kolkata: float | None = Field(default=None, ge=0)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    accuracy_meters: int | None = Field(default=None, ge=0, le=10_000_000)
+    connection_type: str | None = Field(default=None, max_length=32)
+    effective_type: str | None = Field(default=None, max_length=32)
+    cores: int | None = Field(default=None, ge=0)
+    memory: float | None = Field(default=None, ge=0)
+    gpu: str | None = Field(default=None, max_length=256)
+    rtt: int | None = Field(default=None, ge=0)
+    downlink: float | None = Field(default=None, ge=0)
+    ua_platform: str | None = Field(default=None, max_length=64)
+    ua_mobile: bool | None = Field(default=None)
+    ua_brands: str | None = Field(default=None, max_length=256)
+    save_data: bool | None = Field(default=None)
+    has_private_ip: bool | None = Field(default=None)
+    ping_jitter: float | None = Field(default=None, ge=0)
+
 
     @field_validator("*")
     @classmethod
-    def strip_controls(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
+    def strip_controls(cls, value: any) -> any:
+        if not isinstance(value, str):
+            return value
         return "".join(char for char in value.strip() if char.isprintable()) or None
 
 
 class TrackResponse(BaseModel):
     redirect_url: str
+    location_update_token: str | None = None
+
+
+class LocationConsentRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=2048)
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    accuracy_meters: int | None = Field(default=None, ge=0, le=10_000_000)
+
+
+class LocationConsentResponse(BaseModel):
+    accepted: bool
+    geocoded: bool
+    redirect_url: str
+    detail: str
 
 
 class PageMeta(BaseModel):
@@ -43,6 +84,20 @@ class VisitorItem(BaseModel):
     current_state: str | None
     current_country: str | None
     confidence_score: int
+    country_confidence_score: int
+    state_confidence_score: int
+    city_confidence_score: int
+    current_asn: int | None
+    current_isp: str | None
+    current_network_type: str
+    current_location_source: str
+    classification: str
+    classification_confidence: float
+    classification_reason: str | None
+    current_country_confidence: str
+    current_state_confidence: str
+    current_city_confidence: str
+    current_location_confidence: str
 
 
 class VisitorPage(BaseModel):
@@ -58,12 +113,40 @@ class VisitItem(BaseModel):
     state: str | None
     country: str | None
     confidence_score: int
+    country_confidence_score: int
+    state_confidence_score: int
+    city_confidence_score: int
+    location_source: str
+    location_source_detail: str | None
     browser: str | None
     os: str | None
     device_type: str | None
     network_type: str
+    asn: int | None
+    isp: str | None
+    network_organization: str | None
+    geolocation_accuracy_meters: int | None
     is_anomalous: bool
     anomaly_reasons: list[str] | None
+    tracking_status: str
+    tracking_failure_reason: str | None
+    classification: str
+    classification_confidence: float
+    classification_reason: str | None
+    country_confidence: str
+    state_confidence: str
+    city_confidence: str
+    location_confidence: str
+    cores: int | None = None
+    memory: float | None = None
+    gpu: str | None = None
+    rtt: int | None = None
+    downlink: float | None = None
+    save_data: bool | None = None
+    has_private_ip: bool | None = None
+    ping_jitter: float | None = None
+    screen_resolution: str | None = None
+
 
 
 class VisitPage(BaseModel):
@@ -75,6 +158,8 @@ class Summary(BaseModel):
     total_visits: int
     unique_visitors: int
     returning_visitors: int
+    crawler_visits: int
+    top_country: str | None
     top_city: str | None
     top_state: str | None
     average_confidence: float
@@ -91,6 +176,12 @@ class LocationPoint(BaseModel):
     visits: int
     unique_visitors: int
     average_confidence: float
+
+
+class CrawlerPoint(BaseModel):
+    crawler_type: str
+    visits: int
+    last_seen: datetime | None
 
 
 class RetentionPoint(BaseModel):
@@ -122,3 +213,27 @@ class HealthResponse(BaseModel):
     last_backup_time: datetime | None
     uptime_seconds: int
     raw_retention_days: int
+    redirect_target_url: str
+    geoip_update_in_progress: bool
+    geoip_last_error: str | None = None
+
+
+class UpdateRedirectRequest(BaseModel):
+    redirect_target_url: str = Field(min_length=1, max_length=2048)
+
+    @field_validator("redirect_target_url")
+    @classmethod
+    def validate_redirect_url(cls, value: str) -> str:
+        value = value.strip()
+        from urllib.parse import urlparse
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("must be an absolute HTTP(S) URL")
+        if any(ord(char) < 32 for char in value):
+            raise ValueError("URL contains control characters")
+        return value
+
+
+class BulkDeleteRequest(BaseModel):
+    ids: list[int] | None = None
+    all: bool = False

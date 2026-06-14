@@ -12,4 +12,7 @@ data/
 backups/
 frontend/.env.local
 *.log
+geoip/*.mmdb
+backend/*.txt
+
 

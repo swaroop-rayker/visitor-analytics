@@ -2,11 +2,14 @@ from app.services.geoip import GeoIPService, classify_network
 
 
 def test_network_classification_heuristics():
-    assert classify_network("Amazon.com Inc.") == "Hosting Provider"
-    assert classify_network("Example VPN Services") == "VPN Candidate"
+    assert classify_network("Amazon.com Inc.") == "Cloud Provider"
+    assert classify_network("Example VPN Services") == "VPN"
     assert classify_network("Airtel Mobile") == "Mobile Carrier"
     assert classify_network("Example University") == "Corporate Network"
-    assert classify_network("Neighborhood Broadband") == "Residential ISP"
+    assert classify_network("Neighborhood Broadband") == "Residential Broadband"
+    assert classify_network("Bharti Airtel Ltd. (AS9498)", 9498) == "Residential Broadband"
+    assert classify_network("Airtel Xstream Fiber") == "Residential Broadband"
+    assert classify_network("Reliance Jio Infocomm Limited", 64044) == "Residential Broadband"
     assert classify_network(None) == "Unknown"
 
 

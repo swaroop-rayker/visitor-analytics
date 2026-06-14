@@ -41,6 +41,8 @@ rate_limiter = SlidingWindowLimiter()
 
 
 def _trusted_proxy(value: str) -> bool:
+    if "*" in settings.forwarded_allow_ip_list:
+        return True
     try:
         address = ipaddress.ip_address(value)
         return any(address in ipaddress.ip_network(item, strict=False) for item in settings.forwarded_allow_ip_list)
@@ -49,6 +51,15 @@ def _trusted_proxy(value: str) -> bool:
 
 
 def client_ip(request: Request) -> str:
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip:
+        candidate = cf_ip.strip()
+        try:
+            ipaddress.ip_address(candidate)
+            return candidate
+        except ValueError:
+            pass
+
     peer = request.client.host if request.client else "127.0.0.1"
     if _trusted_proxy(peer):
         forwarded = request.headers.get("x-forwarded-for")
@@ -106,3 +117,33 @@ def decode_access_token(token: str) -> str:
         return str(payload["sub"])
     except (jwt.PyJWTError, KeyError) as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session") from exc
+
+
+def create_location_update_token(visit_id: int, visitor_hash: str) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(visit_id),
+        "vh": visitor_hash[:16],
+        "purpose": "location_consent",
+        "iat": now,
+        "exp": now + timedelta(minutes=10),
+        "aud": "visitor-analytics-location",
+        "iss": "visitor-analytics",
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
+def decode_location_update_token(token: str) -> tuple[int, str]:
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=["HS256"],
+            audience="visitor-analytics-location",
+            issuer="visitor-analytics",
+        )
+        if payload.get("purpose") != "location_consent":
+            raise KeyError("purpose")
+        return int(payload["sub"]), str(payload["vh"])
+    except (ValueError, jwt.PyJWTError, KeyError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid location update token") from exc
