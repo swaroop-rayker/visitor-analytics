@@ -2,6 +2,7 @@ name: visitor-analytics
 
 services:
   backend:
+    image: ${DOCKER_USERNAME:-local}/visitor-analytics-backend:latest
     build: ./backend
     restart: unless-stopped
     env_file: ${ENV_FILE:-.env}
@@ -26,6 +27,7 @@ services:
       - no-new-privileges:true
 
   frontend:
+    image: ${DOCKER_USERNAME:-local}/visitor-analytics-frontend:latest
     build: ./frontend
     restart: unless-stopped
     expose:
@@ -55,6 +57,7 @@ services:
       - no-new-privileges:true
 
   backup:
+    image: ${DOCKER_USERNAME:-local}/visitor-analytics-backend:latest
     build: ./backend
     restart: unless-stopped
     command: ["python", "-m", "app.jobs.backup_daemon"]
