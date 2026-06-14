@@ -14,6 +14,14 @@ http {
     keepalive_timeout 30;
     client_max_body_size 32k;
 
+    # Real IP configuration for Cloudflare Tunnels & Docker proxies
+    set_real_ip_from 127.0.0.1;
+    set_real_ip_from 10.0.0.0/8;
+    set_real_ip_from 172.16.0.0/12;
+    set_real_ip_from 192.168.0.0/16;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
     limit_req_zone $binary_remote_addr zone=tracking:1m rate=2r/s;
     limit_req_zone $binary_remote_addr zone=login:1m rate=5r/m;
     limit_req_log_level notice;
