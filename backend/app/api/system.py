@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import psutil
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks, Request
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -258,4 +258,65 @@ def toggle_latency(
         "disabled": disabled,
         "env_updated": env_updated,
     }
+
+
+@router.get("/debug_visits")
+def debug_visits(db: Session = Depends(get_db)):
+    from app.models import VisitLog
+    from sqlalchemy import select
+    visits = db.scalars(select(VisitLog).order_by(VisitLog.timestamp.desc()).limit(5)).all()
+    results = []
+    for v in visits:
+        results.append({
+            "id": v.id,
+            "timestamp": v.timestamp.isoformat() if v.timestamp else None,
+            "city": v.city,
+            "state": v.state,
+            "country": v.country,
+            "location_source": v.location_source,
+            "location_source_detail": v.location_source_detail,
+            "confidence_score": v.confidence_score,
+            "city_confidence_score": v.city_confidence_score,
+            "state_confidence_score": v.state_confidence_score,
+            "country_confidence_score": v.country_confidence_score,
+            "timezone": v.timezone,
+            "asn": v.asn,
+            "isp": v.isp,
+            "network_type": v.network_type,
+        })
+    return results
+
+
+@router.get("/test_geoip")
+def test_geoip(request: Request, ip: str | None = None):
+    import httpx
+    from app.services.security import client_ip
+    target_ip = (ip or client_ip(request)).strip()
+
+    results = {"target_ip": target_ip}
+
+    # 1. Test ipwho.is
+    try:
+        url = f"http://ipwho.is/{target_ip}"
+        resp = httpx.get(url, timeout=3.0)
+        results["ipwhois"] = {
+            "status_code": resp.status_code,
+            "data": resp.json() if resp.status_code == 200 else resp.text
+        }
+    except Exception as e:
+        results["ipwhois"] = {"error": str(e)}
+
+    # 2. Test ip-api.com
+    try:
+        url = f"http://ip-api.com/json/{target_ip}"
+        resp = httpx.get(url, timeout=3.0)
+        results["ip-api"] = {
+            "status_code": resp.status_code,
+            "data": resp.json() if resp.status_code == 200 else resp.text
+        }
+    except Exception as e:
+        results["ip-api"] = {"error": str(e)}
+
+    return results
+
 

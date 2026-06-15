@@ -81,10 +81,16 @@ def score_passive_location(
     signals: BrowserSignals,
     visitor: Visitor | None,
 ) -> ConfidenceScores:
-    country = 78 if geo.country else 0
-    state = 66 if geo.state else 0
-    city = 58 if geo.city else 0
-    reasons: list[str] = ["geolite2_city" if geo.city or geo.state or geo.country else "geolite2_unavailable"]
+    if getattr(geo, "consensus_verified", False):
+        country = 90 if geo.country else 0
+        state = 85 if geo.state else 0
+        city = 80 if geo.city else 0
+        reasons: list[str] = ["geoip_consensus_boost"]
+    else:
+        country = 78 if geo.country else 0
+        state = 66 if geo.state else 0
+        city = 58 if geo.city else 0
+        reasons = ["geolite2_city" if geo.city or geo.state or geo.country else "geolite2_unavailable"]
     hybrid = False
 
     if geo.asn:
@@ -119,7 +125,9 @@ def score_passive_location(
 
     if geo.geo_timezone and signals.timezone:
         hybrid = True
-        if geo.geo_timezone == signals.timezone:
+        tz_a = geo.geo_timezone.replace("Calcutta", "Kolkata")
+        tz_b = signals.timezone.replace("Calcutta", "Kolkata")
+        if tz_a == tz_b:
             country += 6
             state += 5
             city += 4

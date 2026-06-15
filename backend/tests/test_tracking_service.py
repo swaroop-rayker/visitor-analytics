@@ -133,22 +133,22 @@ def test_classify_visitor_heuristics():
     assert res.confidence == 1.0
     
     # 2. Datacenter browser (Likely Bot)
-    res = classify_visitor("Mozilla/5.0 Chrome/120.0", "3.5.1.1", 16509, "Amazon.com", "Cloud Provider")
+    res = classify_visitor("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "3.5.1.1", 16509, "Amazon.com", "Cloud Provider")
     assert res.classification == "Likely Bot"
     assert res.confidence == 0.8
     
     # 3. VPN Human (Likely Human)
-    res = classify_visitor("Mozilla/5.0 Chrome/120.0", "185.200.118.4", 9009, "Mullvad VPN", "VPN")
+    res = classify_visitor("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "185.200.118.4", 9009, "Mullvad VPN", "VPN")
     assert res.classification == "Likely Human"
     assert res.confidence == 0.7
     
     # 4. Residential Human (Human)
-    res = classify_visitor("Mozilla/5.0 Chrome/120.0", "1.1.1.1", 13335, "Cloudflare Inc.", "Residential Broadband")
+    res = classify_visitor("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "1.1.1.1", 13335, "Cloudflare Inc.", "Residential Broadband")
     assert res.classification == "Human"
     assert res.confidence == 0.95
 
     # 5. Unknown network with standard browser (Human)
-    res = classify_visitor("Mozilla/5.0 Chrome/120.0", "127.0.0.1", None, None, "Unknown")
+    res = classify_visitor("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "127.0.0.1", None, None, "Unknown")
     assert res.classification == "Human"
     assert res.confidence == 0.85
 
@@ -204,7 +204,21 @@ def test_historical_location_fallback_and_source_naming(session_factory):
         assert "historical" in visit2.location_source_detail
 
 
-def test_historical_consented_location_preferred_over_latency_triangulation(session_factory):
+def test_historical_consented_location_preferred_over_latency_triangulation(session_factory, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "disable_latency_triangulation", False)
+    monkeypatch.setattr(
+        "app.services.tracking.reverse_geocode",
+        lambda _lat, _lon: ReverseGeocodeResult(
+            city="Mangalore",
+            state="Karnataka",
+            country="India",
+            raw_city="Mangalore",
+            raw_state="Karnataka",
+            raw_country="India",
+            source_detail="nominatim_reverse_geocode",
+        ),
+    )
     with session_factory() as db:
         # Create a visitor with low-accuracy explicit consent location
         # confidence overall score will be around 70 (lower than triangulation's 77)
@@ -291,10 +305,12 @@ def test_inline_gps_skips_triangulation(session_factory, monkeypatch):
         assert visit.geolocation_accuracy_meters == 50
 
 
-def test_ranked_resolution_agreement_boost(session_factory):
+def test_ranked_resolution_agreement_boost(session_factory, monkeypatch):
     """When ISP parsing and latency triangulation agree on the same city,
     both should get an agreement boost, and the winner should have
     higher confidence than either source alone."""
+    from app.config import settings
+    monkeypatch.setattr(settings, "disable_latency_triangulation", False)
     with session_factory() as db:
         visit = record_visit(
             db,
@@ -328,4 +344,55 @@ def test_ranked_resolution_agreement_boost(session_factory):
         assert visit.city_confidence_score > 85  # base ISP city is 85, boosted to 93
         assert "source_agreement_city_boost" in (visit.location_source_detail or "")  or \
                visit.city_confidence_score >= 90  # either visible in detail or score confirms boost
+
+
+def test_consented_location_stores_detailed_address(session_factory, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.tracking.reverse_geocode",
+        lambda _lat, _lon: ReverseGeocodeResult(
+            city="Bengaluru",
+            state="Karnataka",
+            country="India",
+            raw_city="Bengaluru",
+            raw_state="Karnataka",
+            raw_country="India",
+            source_detail="nominatim_reverse_geocode",
+            address="123 MG Road, Bengaluru, Karnataka, 560001",
+        ),
+    )
+    with session_factory() as db:
+        visit = record_visit(
+            db,
+            visitor_hash="e" * 64,
+            agent=ParsedAgent("Chrome 120", "Windows", "Desktop"),
+            signals=BrowserSignals(timezone="Asia/Kolkata", language="en-IN", latitude=12.97, longitude=77.59, accuracy_meters=10),
+            geo=geo(city="Mumbai"),
+        )
+        assert visit.city == "Bengaluru"
+        assert visit.location_source_detail == "123 MG Road, Bengaluru, Karnataka, 560001"
+
+
+def test_passive_location_appends_postal_code(session_factory):
+    with session_factory() as db:
+        visit = record_visit(
+            db,
+            visitor_hash="f" * 64,
+            agent=ParsedAgent("Chrome 120", "Windows", "Desktop"),
+            signals=BrowserSignals(timezone="Asia/Kolkata", language="en-IN"),
+            geo=GeoResult(
+                city="Bengaluru",
+                state="Karnataka",
+                country="India",
+                geo_timezone="Asia/Kolkata",
+                asn=123,
+                organization="Broadband",
+                network_type="Residential Broadband",
+                base_confidence=78,
+                postal_code="560001",
+                consensus_verified=True,
+            ),
+        )
+        assert visit.city == "Bengaluru"
+        assert "560001" in visit.location_source_detail
+        assert "[Postal Code: 560001]" in visit.location_source_detail
 

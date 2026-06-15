@@ -465,6 +465,7 @@ def record_visit(
     now = utcnow()
     visitor = db.scalar(select(Visitor).where(Visitor.visitor_hash == visitor_hash))
     previous = None
+    geocoded = None
     if visitor:
         previous = db.scalar(
             select(VisitLog)
@@ -572,6 +573,18 @@ def record_visit(
     visitor.current_city_confidence = confidence_level(effective_confidence.city)
     visitor.current_location_confidence = confidence_level(effective_confidence.overall)
 
+    # Format and truncate detailed source description
+    location_source_detail_str = effective_confidence.detail
+    if inline_gps_used:
+        if geocoded and geocoded.address:
+            location_source_detail_str = geocoded.address
+        elif geocoded:
+            location_source_detail_str = f"browser_location_granted; {geocoded.source_detail}"
+    else:
+        if geo.postal_code:
+            location_source_detail_str = f"{location_source_detail_str} [Postal Code: {geo.postal_code}]"
+    location_source_detail_str = (location_source_detail_str or "")[:240]
+
     reasons = detect_anomalies(geo, previous, now, confidence.overall, agent, signals, ip=ip)
     visit = VisitLog(
         visitor_id=visitor.id,
@@ -590,7 +603,7 @@ def record_visit(
         state_confidence_score=effective_confidence.state,
         city_confidence_score=effective_confidence.city,
         location_source=effective_confidence.location_source,
-        location_source_detail=effective_confidence.detail,
+        location_source_detail=location_source_detail_str,
         browser=agent.browser,
         os=agent.os,
         device_type=agent.device_type,
@@ -789,7 +802,9 @@ def apply_consented_location(
     visit.state_confidence_score = confidence.state
     visit.city_confidence_score = confidence.city
     visit.location_source = SOURCE_BROWSER
-    visit.location_source_detail = geocoded.source_detail
+    visit.location_source_detail = (
+        geocoded.address or f"browser_location_granted; {geocoded.source_detail}"
+    )[:240]
     visit.geolocation_accuracy_meters = accuracy_meters
     visit.country_confidence = confidence_level(confidence.country)
     visit.state_confidence = confidence_level(confidence.state)
