@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  Activity, BarChart3, Clock3, HeartPulse, LogOut, MapPinned, Users, Bug,
+  Activity, BarChart3, Clock3, HeartPulse, LogOut, MapPinned, Users, Bug, ShieldCheck,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -13,6 +13,7 @@ const navigation = [
   { href: "/", label: "Overview", icon: Activity },
   { href: "/visitors", label: "Visitors", icon: Users },
   { href: "/locations", label: "Locations", icon: MapPinned },
+  { href: "/geofences", label: "Geofences", icon: ShieldCheck },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/timeline", label: "Timeline", icon: Clock3 },
   { href: "/system", label: "System Health", icon: HeartPulse },

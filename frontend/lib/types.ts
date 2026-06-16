@@ -68,4 +68,7 @@ export type Health = {
   last_backup_time: string | null; uptime_seconds: number;
   raw_retention_days: number; redirect_target_url: string; geoip_update_in_progress: boolean;
   geoip_last_error: string | null;
+  telegram_bot_token: string | null;
+  telegram_chat_id: string | null;
 };
+

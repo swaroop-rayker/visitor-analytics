@@ -11,9 +11,18 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import get_db
 from app.dependencies import require_admin
-from app.schemas import HealthResponse, UpdateRedirectRequest, ToggleGeoIPRequest, ToggleLatencyRequest
+from app.schemas import (
+    HealthResponse,
+    UpdateRedirectRequest,
+    ToggleGeoIPRequest,
+    ToggleLatencyRequest,
+    UpdateTelegramRequest,
+    GeofenceCreate,
+    GeofenceResponse,
+)
 from app.services.geoip import geoip_service
-from app.models import AuditLog
+from app.models import AuditLog, Geofence
+
 
 router = APIRouter(prefix="/system", tags=["system"], dependencies=[Depends(require_admin)])
 STARTED_AT = time.monotonic()
@@ -122,7 +131,10 @@ def health(db: Session = Depends(get_db)) -> HealthResponse:
         geoip_update_in_progress=geoip_updater.GEOIP_UPDATE_IN_PROGRESS,
         geoip_last_error=geoip_updater.LAST_GEOIP_UPDATE_ERROR,
         disable_latency_triangulation=settings.disable_latency_triangulation,
+        telegram_bot_token=settings.telegram_bot_token,
+        telegram_chat_id=settings.telegram_chat_id,
     )
+
 
 
 @router.post("/config/redirect")
@@ -318,5 +330,99 @@ def test_geoip(request: Request, ip: str | None = None):
         results["ip-api"] = {"error": str(e)}
 
     return results
+
+
+@router.post("/config/telegram")
+def update_telegram(
+    payload: UpdateTelegramRequest,
+    admin: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.config_updater import update_env_file
+
+    bot_token = (payload.telegram_bot_token or "").strip()
+    chat_id = (payload.telegram_chat_id or "").strip()
+
+    env_updated_1 = update_env_file("TELEGRAM_BOT_TOKEN", bot_token)
+    env_updated_2 = update_env_file("TELEGRAM_CHAT_ID", chat_id)
+
+    settings.telegram_bot_token = bot_token if bot_token else None
+    settings.telegram_chat_id = chat_id if chat_id else None
+
+    from app.config import get_settings
+    get_settings.cache_clear()
+
+    audit(db, "update_telegram_credentials", admin, "success", {
+        "env_updated": env_updated_1 and env_updated_2
+    })
+
+    return {
+        "success": True,
+        "telegram_bot_token": settings.telegram_bot_token,
+        "telegram_chat_id": settings.telegram_chat_id,
+        "env_updated": env_updated_1 and env_updated_2,
+    }
+
+
+@router.get("/geofences", response_model=list[GeofenceResponse])
+def list_geofences(db: Session = Depends(get_db)):
+    from sqlalchemy import select
+    return db.scalars(select(Geofence).order_by(Geofence.created_at.desc())).all()
+
+
+@router.post("/geofences", response_model=GeofenceResponse)
+def create_geofence(
+    payload: GeofenceCreate,
+    admin: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    gf = Geofence(
+        name=payload.name,
+        type=payload.type,
+        center_latitude=payload.center_latitude,
+        center_longitude=payload.center_longitude,
+        radius_meters=payload.radius_meters,
+        coordinates=payload.coordinates,
+        is_active=True
+    )
+    db.add(gf)
+    db.commit()
+    db.refresh(gf)
+    audit(db, "create_geofence", admin, "success", {"geofence_id": gf.id, "name": gf.name})
+    return gf
+
+
+@router.delete("/geofences/{geofence_id}")
+def delete_geofence(
+    geofence_id: int,
+    admin: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    gf = db.get(Geofence, geofence_id)
+    if not gf:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Geofence not found")
+    db.delete(gf)
+    db.commit()
+    audit(db, "delete_geofence", admin, "success", {"geofence_id": geofence_id, "name": gf.name})
+    return {"success": True}
+
+
+@router.post("/geofences/{geofence_id}/toggle")
+def toggle_geofence(
+    geofence_id: int,
+    admin: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    gf = db.get(Geofence, geofence_id)
+    if not gf:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Geofence not found")
+    gf.is_active = not gf.is_active
+    db.commit()
+    db.refresh(gf)
+    audit(db, "toggle_geofence", admin, "success", {"geofence_id": geofence_id, "is_active": gf.is_active})
+    return {"success": True, "is_active": gf.is_active}
+
 
 

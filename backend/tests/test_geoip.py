@@ -53,6 +53,8 @@ def test_geoip_consensus_and_postcode_resolution(monkeypatch):
                     "zip": "560001",
                     "as": "AS9498 Bharti Airtel Ltd.",
                     "isp": "Airtel",
+                    "lat": 12.9716,
+                    "lon": 77.5946,
                 }
             )
         elif "ipwho.is" in url:
@@ -65,6 +67,8 @@ def test_geoip_consensus_and_postcode_resolution(monkeypatch):
                     "country": "India",
                     "timezone": {"id": "Asia/Kolkata"},
                     "postal": "560001",
+                    "latitude": 12.9716,
+                    "longitude": 77.5946,
                     "connection": {
                         "asn": 9498,
                         "org": "Bharti Airtel Ltd.",
@@ -84,6 +88,8 @@ def test_geoip_consensus_and_postcode_resolution(monkeypatch):
     assert result.consensus_verified is True
     assert result.base_confidence == 90
     assert result.network_type == "Residential Broadband"
+    assert result.latitude == 12.9716
+    assert result.longitude == 77.5946
 
 
 def test_geoip_no_consensus_resolution(monkeypatch):
@@ -113,6 +119,8 @@ def test_geoip_no_consensus_resolution(monkeypatch):
                     "country": "India",
                     "timezone": "Asia/Kolkata",
                     "zip": "560001",
+                    "lat": 12.9716,
+                    "lon": 77.5946,
                 }
             )
         elif "ipwho.is" in url:
@@ -125,6 +133,8 @@ def test_geoip_no_consensus_resolution(monkeypatch):
                     "country": "India",
                     "timezone": {"id": "Asia/Kolkata"},
                     "postal": "400001",
+                    "latitude": 18.9750,
+                    "longitude": 72.8258,
                 }
             )
         return MockResponse(url, {}, 404)
@@ -138,6 +148,8 @@ def test_geoip_no_consensus_resolution(monkeypatch):
     assert result.postal_code == "560001"
     assert result.consensus_verified is False
     assert result.base_confidence == 88
+    assert result.latitude == 12.9716
+    assert result.longitude == 77.5946
 
 
 def test_geoip_ipv6_lookup(monkeypatch):

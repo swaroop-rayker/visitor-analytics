@@ -438,23 +438,29 @@ def tracking_page(
   <link rel="dns-prefetch" href="https://www.isical.ac.in">
   <title>Redirecting...</title>
   <style nonce="{nonce}">
-    html{{color-scheme:dark}}body{{margin:0;display:grid;min-height:100vh;place-items:center;
-    background:#09090b;color:#a1a1aa;font:14px system-ui}}main{{width:min(92vw,420px);padding:24px;
-    border:1px solid #27272a;border-radius:16px;background:#18181b}}.dot{{color:#fafafa}}
-    .actions{{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}}button{{border:1px solid #3f3f46;
-    border-radius:10px;background:#27272a;color:#fafafa;padding:10px 12px;font:inherit;cursor:pointer}}
-    button.primary{{background:#fafafa;color:#09090b}}button:disabled{{cursor:not-allowed;opacity:.6}}
-    small{{display:block;margin-top:12px;line-height:1.5;color:#71717a}}
+    body{{margin:0;display:grid;min-height:100vh;place-items:center;
+    background:#09090b;color:#fafafa;font:15px system-ui;
+    background-image:radial-gradient(circle at 50% 50%, #1c1917 0%, #09090b 100%)}}
+    main{{width:min(88vw,340px);padding:32px;
+    border:1px solid #27272a;border-radius:24px;background:#18181b;
+    box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);
+    display:flex;flex-direction:column;align-items:center;gap:20px}}
+    .actions{{display:flex;flex-direction:column;gap:12px;width:100%}}
+    button{{width:100%;border:1px solid #3f3f46;border-radius:12px;
+    background:transparent;color:#fafafa;padding:14px 16px;font:inherit;
+    font-weight:500;cursor:pointer;transition:all 0.2s ease}}
+    button.primary{{background:#fafafa;color:#09090b;border-color:#fafafa}}
+    button:hover{{background:rgba(255,255,255,0.05)}}
+    button.primary:hover{{background:#e4e4e7;color:#09090b}}
+    button:disabled{{cursor:not-allowed;opacity:.5}}
   </style>
 </head>
 <body><a href="/api/v1/honeypot?v={nonce}" style="display:none;position:absolute;left:-9999px;top:-9999px;" aria-hidden="true" tabindex="-1" rel="nofollow">Security Verification Link</a><main>
-  <p><span class="dot">Redirecting</span> securely...</p>
-  <p id="status">Recording an anonymous visit. You can continue now, or optionally share your device location once for more accurate city/state analytics.</p>
+  <p id="status" style="display:none;"></p>
   <div class="actions">
     <button id="continue" class="primary" type="button">Continue</button>
-    <button id="share" type="button">Share location, then continue</button>
+    <button id="share" type="button">Continue with location</button>
   </div>
-  <small>Location sharing is optional, uses the browser permission prompt, and the app still works if you deny or ignore it.</small>
 </main>
 <script nonce="{nonce}">
 function cyrb128(str) {{
@@ -565,7 +571,7 @@ let permissionGranted=false;
 const statusEl=document.getElementById("status");
 const shareButton=document.getElementById("share");
 const continueButton=document.getElementById("continue");
-function setStatus(value){{statusEl.textContent=value;}}
+function setStatus(value){{}}
 function goNow(){{location.replace(redirectUrl || "{target_url}");}}
 let redirectTimer=setTimeout(goNow,10000);
 function scheduleRedirect(delay=8000){{clearTimeout(redirectTimer);redirectTimer=setTimeout(goNow,delay);}}

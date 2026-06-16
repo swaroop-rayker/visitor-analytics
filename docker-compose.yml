@@ -26,6 +26,9 @@ services:
       start_period: 90s
     security_opt:
       - no-new-privileges:true
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
   frontend:
     image: ${DOCKER_USERNAME:-local}/visitor-analytics-frontend:latest

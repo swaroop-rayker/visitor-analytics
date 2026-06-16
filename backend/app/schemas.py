@@ -151,6 +151,9 @@ class VisitItem(BaseModel):
     screen_resolution: str | None = None
     canvas_hash: str | None = None
     webgl_hash: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+
 
 
 
@@ -227,6 +230,9 @@ class HealthResponse(BaseModel):
     geoip_update_in_progress: bool
     geoip_last_error: str | None = None
     disable_latency_triangulation: bool
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+
 
 
 class UpdateRedirectRequest(BaseModel):
@@ -256,3 +262,30 @@ class ToggleGeoIPRequest(BaseModel):
 
 class ToggleLatencyRequest(BaseModel):
     disabled: bool
+
+
+class UpdateTelegramRequest(BaseModel):
+    telegram_bot_token: str | None = Field(default=None, max_length=200)
+    telegram_chat_id: str | None = Field(default=None, max_length=100)
+
+
+class GeofenceCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    type: str = Field(default="circle", max_length=20)  # "circle" or "polygon"
+    center_latitude: float | None = Field(default=None, ge=-90, le=90)
+    center_longitude: float | None = Field(default=None, ge=-180, le=180)
+    radius_meters: float | None = Field(default=None, ge=0)
+    coordinates: list[list[float]] | None = Field(default=None)
+
+
+class GeofenceResponse(BaseModel):
+    id: int
+    name: str
+    type: str
+    center_latitude: float | None = None
+    center_longitude: float | None = None
+    radius_meters: float | None = None
+    coordinates: list[list[float]] | None = None
+    is_active: bool
+    created_at: datetime
+

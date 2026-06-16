@@ -481,6 +481,9 @@ def record_visit(
     # ── Inline GPS: browser location was sent in /sync payload ─────────
     inline_gps_used = False
     geolocation_accuracy = None
+    effective_latitude = None
+    effective_longitude = None
+
     if signals.latitude is not None and signals.longitude is not None:
         geocoded = reverse_geocode(signals.latitude, signals.longitude)
         geolocation_accuracy = signals.accuracy_meters
@@ -488,6 +491,8 @@ def record_visit(
         effective_city = geocoded.city
         effective_state = geocoded.state
         effective_country = geocoded.country
+        effective_latitude = signals.latitude
+        effective_longitude = signals.longitude
         inline_gps_used = True
         logger.info(
             "[GEOLOCATION] Inline GPS applied: %s, %s, %s (accuracy=%s)",
@@ -499,6 +504,8 @@ def record_visit(
         effective_city, effective_state, effective_country, effective_confidence = resolve_best_location(
             geo, signals, visitor, confidence, ip=ip
         )
+        effective_latitude = geo.latitude
+        effective_longitude = geo.longitude
 
     if not inline_gps_used and visitor and any((visitor.current_city, visitor.current_state, visitor.current_country)):
         is_unresolved = not any((geo.city, geo.state, geo.country))
@@ -521,6 +528,22 @@ def record_visit(
             effective_city = visitor.current_city
             effective_state = visitor.current_state
             effective_country = visitor.current_country
+            
+            # Fetch last known coordinates from history
+            historical_visit = db.scalars(
+                select(VisitLog)
+                .where(
+                    VisitLog.visitor_id == visitor.id,
+                    VisitLog.latitude.isnot(None),
+                    VisitLog.longitude.isnot(None)
+                )
+                .order_by(VisitLog.timestamp.desc())
+                .limit(1)
+            ).first()
+            if historical_visit:
+                effective_latitude = historical_visit.latitude
+                effective_longitude = historical_visit.longitude
+
             fallback_source = visitor.current_location_source or "Unknown"
             if "user-consented" in fallback_source:
                 fallback_source = fallback_source.replace("user-consented", "historical")
@@ -611,6 +634,8 @@ def record_visit(
         asn=geo.asn,
         isp=geo.organization,
         network_organization=geo.organization,
+        latitude=effective_latitude,
+        longitude=effective_longitude,
         timezone=signals.timezone,
         language=signals.language,
         accept_language=signals.accept_language,
@@ -650,6 +675,12 @@ def record_visit(
         
     db.commit()
     db.refresh(visit)
+    if not is_crawler:
+        try:
+            from app.services.telegram import trigger_telegram_notification
+            trigger_telegram_notification(visit.id, is_update=False)
+        except Exception as te:
+            logger.error("Failed to trigger telegram notification on visit: %s", str(te))
     if signals.nonce:
         from app.services.integrity import register_visit_nonce
         register_visit_nonce(signals.nonce, visit.id)
@@ -806,6 +837,8 @@ def apply_consented_location(
         geocoded.address or f"browser_location_granted; {geocoded.source_detail}"
     )[:240]
     visit.geolocation_accuracy_meters = accuracy_meters
+    visit.latitude = latitude
+    visit.longitude = longitude
     visit.country_confidence = confidence_level(confidence.country)
     visit.state_confidence = confidence_level(confidence.state)
     visit.city_confidence = confidence_level(confidence.city)
@@ -834,4 +867,10 @@ def apply_consented_location(
         _increment_daily_stat(db, visitor, visit.timestamp.date(), new_city, new_state, new_country)
 
     db.commit()
+    if not visit.is_crawler:
+        try:
+            from app.services.telegram import trigger_telegram_notification
+            trigger_telegram_notification(visit.id, is_update=True)
+        except Exception as te:
+            logger.error("Failed to trigger telegram notification on consent update: %s", str(te))
     return True

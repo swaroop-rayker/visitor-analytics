@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     forwarded_allow_ips: str = "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,*"
     login_rate_limit_per_minute: int = 5
     track_rate_limit_per_minute: int = 30
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+
 
     @field_validator("public_base_url")
     @classmethod

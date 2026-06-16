@@ -95,6 +95,8 @@ class VisitLog(Base):
     ping_jitter: Mapped[float | None] = mapped_column(Float)
     canvas_hash: Mapped[str | None] = mapped_column(String(64))
     webgl_hash: Mapped[str | None] = mapped_column(String(64))
+    latitude: Mapped[float | None] = mapped_column(Float)
+    longitude: Mapped[float | None] = mapped_column(Float)
     visitor: Mapped[Visitor] = relationship(back_populates="visits")
 
 
@@ -146,3 +148,18 @@ class CrawlerVisitLog(Base):
     isp: Mapped[str | None] = mapped_column(String(200))
     network_type: Mapped[str] = mapped_column(String(40), default="Unknown", nullable=False)
     location_source: Mapped[str] = mapped_column(String(80), default="IP/ASN Inference", nullable=False)
+
+
+class Geofence(Base):
+    __tablename__ = "geofences"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    type: Mapped[str] = mapped_column(String(20), default="circle", nullable=False)  # "circle" or "polygon"
+    center_latitude: Mapped[float | None] = mapped_column(Float)
+    center_longitude: Mapped[float | None] = mapped_column(Float)
+    radius_meters: Mapped[float | None] = mapped_column(Float)
+    coordinates: Mapped[list[list[float]] | None] = mapped_column(JSON)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+

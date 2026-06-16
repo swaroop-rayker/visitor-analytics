@@ -26,6 +26,8 @@ class GeoResult:
     base_confidence: int = 0
     postal_code: str | None = None
     consensus_verified: bool = False
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 VPN_MARKERS = {
@@ -125,6 +127,7 @@ class GeoIPService:
 
     def lookup(self, ip_address: str) -> GeoResult:
         maxmind_city = maxmind_state = maxmind_country = maxmind_timezone = maxmind_postal = None
+        maxmind_latitude = maxmind_longitude = None
         asn = None
         organization = None
         maxmind_confidence = 0
@@ -138,6 +141,8 @@ class GeoIPService:
                     maxmind_country = response.country.name
                     maxmind_timezone = response.location.time_zone
                     maxmind_postal = response.postal.code
+                    maxmind_latitude = response.location.latitude
+                    maxmind_longitude = response.location.longitude
                     maxmind_confidence = 55 + (10 if maxmind_city else 0) + (8 if maxmind_state else 0) + (5 if maxmind_country else 0)
         except (AddressNotFoundError, InvalidDatabaseError, ValueError, OSError):
             pass
@@ -169,6 +174,8 @@ class GeoIPService:
             "country_raw": maxmind_country,
             "timezone": maxmind_timezone,
             "postal_code": maxmind_postal,
+            "latitude": maxmind_latitude,
+            "longitude": maxmind_longitude,
         }
 
         ip_api_candidate = None
@@ -239,6 +246,8 @@ class GeoIPService:
                     "country_raw": ip_api_data.get("country"),
                     "timezone": ip_api_data.get("timezone"),
                     "postal_code": ip_api_data.get("zip"),
+                    "latitude": ip_api_data.get("lat"),
+                    "longitude": ip_api_data.get("lon"),
                 }
 
             if ipwhois_data:
@@ -262,6 +271,8 @@ class GeoIPService:
                     "country_raw": ipwhois_data.get("country"),
                     "timezone": tz_id,
                     "postal_code": ipwhois_data.get("postal"),
+                    "latitude": ipwhois_data.get("latitude"),
+                    "longitude": ipwhois_data.get("longitude"),
                 }
 
         # Determine best location and consensus
@@ -344,13 +355,17 @@ class GeoIPService:
         country_raw = winner.get("country_raw")
         timezone = winner.get("timezone")
         postal_code = winner.get("postal_code")
+        latitude = winner.get("latitude")
+        longitude = winner.get("longitude")
 
         logger.info(
-            "[GEOLOCATION] GeoIP consensus: verified=%s, winner_source=%s, city=%s, postal_code=%s",
+            "[GEOLOCATION] GeoIP consensus: verified=%s, winner_source=%s, city=%s, postal_code=%s, lat=%s, lon=%s",
             consensus_verified,
             "ip-api" if winner == ip_api_candidate else ("ipwhois" if winner == ipwhois_candidate else "maxmind"),
             city,
-            postal_code
+            postal_code,
+            latitude,
+            longitude
         )
 
         return GeoResult(
@@ -367,6 +382,8 @@ class GeoIPService:
             base_confidence=min(confidence, 90),
             postal_code=postal_code,
             consensus_verified=consensus_verified,
+            latitude=latitude,
+            longitude=longitude,
         )
 
 

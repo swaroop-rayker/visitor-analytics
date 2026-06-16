@@ -396,3 +396,62 @@ def test_passive_location_appends_postal_code(session_factory):
         assert "560001" in visit.location_source_detail
         assert "[Postal Code: 560001]" in visit.location_source_detail
 
+
+def test_coordinates_are_saved_in_visit_log(session_factory, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.tracking.reverse_geocode",
+        lambda _lat, _lon: ReverseGeocodeResult(
+            city="Mysuru",
+            state="Karnataka",
+            country="India",
+            raw_city="Mysuru",
+            raw_state="Karnataka",
+            raw_country="India",
+            source_detail="nominatim_reverse_geocode",
+            address="123 Palace Road, Mysuru, Karnataka, 570001",
+        ),
+    )
+    with session_factory() as db:
+        # Test inline coordinates
+        visit = record_visit(
+            db,
+            visitor_hash="g" * 64,
+            agent=ParsedAgent("Chrome 120", "Windows", "Desktop"),
+            signals=BrowserSignals(
+                timezone="Asia/Kolkata",
+                language="en-IN",
+                latitude=12.2958,
+                longitude=76.6394,
+                accuracy_meters=15
+            ),
+            geo=geo(city="Mumbai"),
+        )
+        assert visit.latitude == 12.2958
+        assert visit.longitude == 76.6394
+
+        # Test consented coordinates
+        visit2 = record_visit(
+            db,
+            visitor_hash="h" * 64,
+            agent=ParsedAgent("Chrome 120", "Windows", "Desktop"),
+            signals=BrowserSignals(timezone="Asia/Kolkata", language="en-IN"),
+            geo=geo(),
+        )
+        assert visit2.latitude is None
+        assert visit2.longitude is None
+
+        # Apply consent coordinates
+        success = apply_consented_location(
+            db,
+            visit_id=visit2.id,
+            visitor_hash_prefix=visit2.visitor.visitor_hash[:8],
+            latitude=12.9716,
+            longitude=77.5946,
+            accuracy_meters=10
+        )
+        assert success is True
+        db.refresh(visit2)
+        assert visit2.latitude == 12.9716
+        assert visit2.longitude == 77.5946
+
+
